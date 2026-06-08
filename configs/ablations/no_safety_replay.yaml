@@ -1,0 +1,7 @@
+extends: configs/safeprune_qwen2_5_7b.yaml
+experiment:
+  name: safeprune_no_safety_replay
+recovery:
+  safety_replay_weight: 0.0
+  replay_ratio: 0.0
+

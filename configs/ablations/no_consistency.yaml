@@ -1,0 +1,6 @@
+extends: configs/safeprune_qwen2_5_7b.yaml
+experiment:
+  name: safeprune_no_consistency
+recovery:
+  consistency_weight: 0.0
+

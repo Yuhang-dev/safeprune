@@ -1,0 +1,35 @@
+extends: configs/safeprune_qwen2_5_7b.yaml
+
+experiment:
+  name: safeprune_qwen2_5_3b_4090
+  output_dir: outputs/safeprune_qwen2_5_3b_4090
+
+model:
+  base_model: Qwen/Qwen2.5-3B-Instruct
+  teacher_model: outputs/safeprune_qwen2_5_3b_4090/dpo_teacher
+  torch_dtype: bfloat16
+  use_flash_attention_2: false
+
+data:
+  max_length: 1024
+  max_prompt_length: 512
+
+dpo:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  save_steps: 250
+
+pruning:
+  sparsity: 0.35
+  target_sparsities: [0.25, 0.35]
+  scores_dir: outputs/safeprune_qwen2_5_3b_4090/prune_scores
+  pruned_dir: outputs/safeprune_qwen2_5_3b_4090/pruned
+
+recovery:
+  output_dir: outputs/safeprune_qwen2_5_3b_4090/recovered
+  lora_r: 16
+  lora_alpha: 32
+  gradient_accumulation_steps: 16
+
+evaluation:
+  output_dir: outputs/safeprune_qwen2_5_3b_4090/eval

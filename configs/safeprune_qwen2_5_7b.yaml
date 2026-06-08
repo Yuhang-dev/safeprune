@@ -1,0 +1,72 @@
+experiment:
+  name: safeprune_qwen2_5_7b
+  seed: 42
+  output_dir: outputs/safeprune_qwen2_5_7b
+
+model:
+  base_model: Qwen/Qwen2.5-7B-Instruct
+  teacher_model: outputs/safeprune_qwen2_5_7b/dpo_teacher
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  use_flash_attention_2: true
+
+data:
+  preference_train: data/preference/train.jsonl
+  preference_eval: data/preference/eval.jsonl
+  safety_replay: data/preference/safety_replay.jsonl
+  calibration: data/calibration/calibration.jsonl
+  max_length: 2048
+  max_prompt_length: 1024
+
+dpo:
+  beta: 0.1
+  learning_rate: 5.0e-6
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_steps: 500
+
+pruning:
+  sparsity: 0.35
+  target_sparsities: [0.25, 0.35, 0.50]
+  prune_attention_heads: true
+  prune_mlp_channels: true
+  score_weights:
+    magnitude: 0.40
+    activation: 0.35
+    loss_delta: 0.25
+  min_heads_per_layer: 1
+  min_mlp_channels_per_layer: 128
+  calibration_batch_size: 1
+  scores_dir: outputs/safeprune_qwen2_5_7b/prune_scores
+  pruned_dir: outputs/safeprune_qwen2_5_7b/pruned
+
+recovery:
+  method: safeprune_dpo
+  output_dir: outputs/safeprune_qwen2_5_7b/recovered
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  learning_rate: 1.0e-5
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  dpo_weight: 1.0
+  consistency_weight: 0.2
+  safety_replay_weight: 0.3
+  replay_ratio: 0.20
+  teacher_temperature: 1.0
+
+evaluation:
+  output_dir: outputs/safeprune_qwen2_5_7b/eval
+  capability_tasks: [mmlu, gsm8k]
+  safety_tasks: [harmbench, advbench_refusal]
+  efficiency:
+    benchmark_tokens: 512
+    batch_size: 1
+    warmup_steps: 3
+    measure_steps: 10
+
