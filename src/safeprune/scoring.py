@@ -118,11 +118,15 @@ def compute_activation_scores(
             view = output.detach().float().reshape(output.shape[0], output.shape[1], num_heads, head_dim)
             attn_sums[idx].add_(view.abs().mean(dim=(0, 1, 3)).cpu())
 
-        def gate_hook(_module, _inputs, output, idx=layer_idx):
-            mlp_sums[idx].add_(output.detach().float().abs().mean(dim=(0, 1)).cpu())
+        def down_pre_hook(_module, inputs, idx=layer_idx):
+            # Qwen SwiGLU sends SiLU(gate_proj(x)) * up_proj(x) into down_proj.
+            # This tensor is the actual per-channel FFN contribution and is a
+            # better pruning signal than gate_proj alone.
+            hidden = inputs[0]
+            mlp_sums[idx].add_(hidden.detach().float().abs().mean(dim=(0, 1)).cpu())
 
         handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
-        handles.append(layer.mlp.gate_proj.register_forward_hook(gate_hook))
+        handles.append(layer.mlp.down_proj.register_forward_pre_hook(down_pre_hook))
 
     model.eval()
     with torch.no_grad():
@@ -199,11 +203,12 @@ def _compute_activation_scores_for_prompts(
             view = output.detach().float().reshape(output.shape[0], output.shape[1], num_heads, head_dim)
             attn_sums[idx].add_(view.abs().mean(dim=(0, 1, 3)).cpu())
 
-        def gate_hook(_module, _inputs, output, idx=layer_idx):
-            mlp_sums[idx].add_(output.detach().float().abs().mean(dim=(0, 1)).cpu())
+        def down_pre_hook(_module, inputs, idx=layer_idx):
+            hidden = inputs[0]
+            mlp_sums[idx].add_(hidden.detach().float().abs().mean(dim=(0, 1)).cpu())
 
         handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
-        handles.append(layer.mlp.gate_proj.register_forward_hook(gate_hook))
+        handles.append(layer.mlp.down_proj.register_forward_pre_hook(down_pre_hook))
 
     model.eval()
     with torch.no_grad():
