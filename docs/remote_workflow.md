@@ -1,81 +1,99 @@
-# Remote SafePrune-DPO Workflow
+# Remote Agent FFN Pruning Workflow
 
-This file is the execution checklist for the remote GPU environment.
+This is the current remote checklist. SafePrune-DPO training and recovery
+scripts are legacy and are not the default workflow.
 
 ## 1. Install
 
+Remote GPU install:
+
 ```bash
 cd /path/to/Prune
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev,eval]"
-```
-
-If the remote machine already uses conda:
-
-```bash
 conda activate llm
-pip install -e ".[dev,eval]"
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+pip install -e .
 ```
 
-## 2. Prepare Data
-
-Create these files:
-
-- `data/preference/train.jsonl`
-- `data/preference/eval.jsonl`
-- `data/preference/safety_replay.jsonl`
-- `data/calibration/calibration.jsonl`
-
-Validate each preference file:
+If Hugging Face Xet causes download auth errors:
 
 ```bash
-python scripts/validate_data.py --path data/preference/train.jsonl
-python scripts/validate_data.py --path data/preference/eval.jsonl
-python scripts/validate_data.py --path data/preference/safety_replay.jsonl
+export HF_HUB_DISABLE_XET=1
 ```
 
-## 3. Teacher
+## 2. Local CPU / Remote Dry-Run Checks
+
+These checks do not require a local GPU because they skip model loading.
 
 ```bash
-accelerate launch scripts/train_dpo_teacher.py \
-  --config configs/safeprune_qwen2_5_7b.yaml
+python -m unittest discover -s tests
+
+python scripts/build_stage_mask_bank.py \
+  --config configs/agent_qwen2_5_1_5b_4090.yaml \
+  --skip-model-load
+
+python scripts/evaluate_agent_masks.py \
+  --config configs/agent_qwen2_5_1_5b_4090.yaml \
+  --dry-run
 ```
 
-## 4. Pruning Scores and Plans
+## 3. Prepare Controlled Agent Tasks
 
 ```bash
-python scripts/compute_prune_scores.py \
-  --config configs/safeprune_qwen2_5_7b.yaml
+python scripts/prepare_agent_tasks.py \
+  --output data/agent/controlled_tasks.jsonl \
+  --count 1000
 ```
 
-This writes:
-
-- `outputs/safeprune_qwen2_5_7b/prune_scores/scores.json`
-- `outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.25.json`
-- `outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.35.json`
-- `outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.50.json`
-
-## 5. Ablations
-
-Generate resolved configs:
+## 4. Build Stage FFN Mask Bank
 
 ```bash
-python scripts/run_ablation_grid.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --write-configs
+python scripts/build_stage_mask_bank.py \
+  --config configs/agent_qwen2_5_1_5b_4090.yaml \
+  --max-calibration-batches 256
 ```
 
-Run the printed `accelerate launch` commands.
+Output:
 
-## 6. Evaluation
+```text
+outputs/agent_qwen2_5_1_5b_4090/mask_bank/mask_bank.json
+outputs/agent_qwen2_5_1_5b_4090/mask_bank/manifest.json
+```
+
+Repeat with:
 
 ```bash
-python scripts/evaluate_model.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --model outputs/safeprune_qwen2_5_7b/recovered
+python scripts/build_stage_mask_bank.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --max-calibration-batches 512
 ```
 
-Connect the generated manifest to the remote lm-eval, HarmBench, AdvBench
-refusal, and latency scripts.
+## 5. Agent Evaluation
 
+The local implementation currently supports dry-run manifests. Remote full
+generation evaluation should write metrics with this method set:
+
+```text
+dense
+static_global_mask
+stage_mask
+failure_redensification
+hidden_state_only_router
+```
+
+Required metrics:
+
+```text
+task_success_rate
+tool_call_validity
+recovery_success_rate
+average_active_ffn_ratio
+latency_ms
+cost_per_success
+```
+
+## 6. SliceGPT Reproduction
+
+Use `docs/slicegpt_repro_commands.md`. Keep the external repository outside
+this project or under an ignored workspace directory. Do not vendor it into
+`src/`.

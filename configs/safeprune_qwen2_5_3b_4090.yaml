@@ -33,3 +33,9 @@ recovery:
 
 evaluation:
   output_dir: outputs/safeprune_qwen2_5_3b_4090/eval
+
+tracking:
+  enabled: true
+  backend: swanlab
+  project: safeprune-dpo-4090
+  tags: ["4090", feasibility, qwen2.5-3b]

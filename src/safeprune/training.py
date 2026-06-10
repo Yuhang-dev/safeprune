@@ -19,8 +19,7 @@ def ensure_output_dir(path: str | Path) -> Path:
 
 def train_dpo_teacher(config: SafePruneConfig) -> None:
     from datasets import Dataset
-    from transformers import TrainingArguments
-    from trl import DPOTrainer
+    from trl import DPOConfig, DPOTrainer
 
     output_dir = ensure_output_dir(Path(config.experiment.output_dir) / "dpo_teacher")
     records = load_preference_jsonl(config.data.preference_train)
@@ -32,7 +31,7 @@ def train_dpo_teacher(config: SafePruneConfig) -> None:
         eval_dataset = Dataset.from_list(to_hf_dpo_rows(eval_records))
 
     model, tokenizer = load_causal_lm_and_tokenizer(config.model.base_model, config.model)
-    training_args = TrainingArguments(
+    training_args = DPOConfig(
         output_dir=str(output_dir),
         learning_rate=config.dpo.learning_rate,
         num_train_epochs=config.dpo.num_train_epochs,
@@ -44,17 +43,18 @@ def train_dpo_teacher(config: SafePruneConfig) -> None:
         bf16=config.model.torch_dtype in {"bfloat16", "bf16"},
         remove_unused_columns=False,
         report_to="none",
+        beta=config.dpo.beta,
+        max_length=config.data.max_length,
+        max_prompt_length=config.data.max_prompt_length,
     )
     trainer = DPOTrainer(
         model=model,
         ref_model=None,
         args=training_args,
-        beta=config.dpo.beta,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
-        max_length=config.data.max_length,
-        max_prompt_length=config.data.max_prompt_length,
+        callbacks=_build_tracking_callbacks(config, stage="dpo_teacher"),
     )
     started = time.time()
     trainer.train()
@@ -68,8 +68,7 @@ def train_dpo_teacher(config: SafePruneConfig) -> None:
 
 def recover_with_lora(config: SafePruneConfig) -> None:
     from datasets import Dataset
-    from transformers import TrainingArguments
-    from trl import DPOTrainer
+    from trl import DPOConfig, DPOTrainer
 
     output_dir = ensure_output_dir(config.recovery.output_dir)
     records = load_preference_jsonl(config.data.preference_train)
@@ -84,11 +83,12 @@ def recover_with_lora(config: SafePruneConfig) -> None:
         attach_qwen_forward_masks(model, load_plan(plan_path))
     model = attach_lora(model, config.recovery)
 
-    ref_model_path = config.model.teacher_model or config.model.base_model
-    ref_model, _ = load_causal_lm_and_tokenizer(ref_model_path, config.model)
+    ref_model, _ = load_causal_lm_and_tokenizer(config.pruning.pruned_dir, config.model)
+    if plan_path.exists():
+        attach_qwen_forward_masks(ref_model, load_plan(plan_path))
 
     train_dataset = Dataset.from_list(to_hf_dpo_rows(records))
-    training_args = TrainingArguments(
+    training_args = DPOConfig(
         output_dir=str(output_dir),
         learning_rate=config.recovery.learning_rate,
         num_train_epochs=config.recovery.num_train_epochs,
@@ -99,20 +99,49 @@ def recover_with_lora(config: SafePruneConfig) -> None:
         bf16=config.model.torch_dtype in {"bfloat16", "bf16"},
         remove_unused_columns=False,
         report_to="none",
+        beta=config.dpo.beta,
+        max_length=config.data.max_length,
+        max_prompt_length=config.data.max_prompt_length,
     )
     trainer = DPOTrainer(
         model=model,
         ref_model=ref_model,
         args=training_args,
-        beta=config.dpo.beta,
         train_dataset=train_dataset,
         tokenizer=tokenizer,
-        max_length=config.data.max_length,
-        max_prompt_length=config.data.max_prompt_length,
+        callbacks=_build_tracking_callbacks(config, stage="recovery"),
     )
     trainer.train()
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
+
+
+def _build_tracking_callbacks(config: SafePruneConfig, stage: str) -> list:
+    tracking = config.tracking
+    if not tracking.enabled or tracking.backend == "none":
+        return []
+    if tracking.backend != "swanlab":
+        raise ValueError(f"Unsupported tracking backend: {tracking.backend}")
+
+    try:
+        from swanlab.integration.transformers import SwanLabCallback
+    except ImportError as exc:  # pragma: no cover - depends on remote env
+        raise RuntimeError("SwanLab tracking is enabled. Install it with: pip install swanlab") from exc
+
+    experiment_name = tracking.experiment_name or f"{config.experiment.name}_{stage}"
+    callback_kwargs = {
+        "project": tracking.project,
+        "experiment_name": experiment_name,
+        "description": tracking.description or f"{stage} run for {config.experiment.name}",
+        "log_dir": tracking.logdir or str(Path(config.experiment.output_dir) / "swanlog"),
+    }
+    if tracking.workspace:
+        callback_kwargs["workspace"] = tracking.workspace
+    if tracking.mode:
+        callback_kwargs["mode"] = tracking.mode
+    if tracking.tags:
+        callback_kwargs["tags"] = tracking.tags
+    return [SwanLabCallback(**callback_kwargs)]
 
 
 def _json_dumps(value) -> str:

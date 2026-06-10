@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .data import load_preference_jsonl
+from .data import iter_agent_stage_texts, load_agent_jsonl, load_preference_jsonl
 from .pruning import ScoreWeights, combine_importance_scores, select_pruned_indices
 
 
@@ -95,7 +95,6 @@ def compute_activation_scores(
 ) -> list[LayerScores]:
     torch = _require_torch()
     layers = _get_decoder_layers(model)
-    device = next(model.parameters()).device
     records = load_preference_jsonl(calibration_path)
     prompts = [record.prompt for record in records]
     if max_batches is not None:
@@ -110,17 +109,17 @@ def compute_activation_scores(
     intermediate = int(getattr(model.config, "intermediate_size"))
 
     for _ in layers:
-        attn_sums.append(torch.zeros(num_heads, device=device))
-        mlp_sums.append(torch.zeros(intermediate, device=device))
+        attn_sums.append(torch.zeros(num_heads, device="cpu"))
+        mlp_sums.append(torch.zeros(intermediate, device="cpu"))
 
     for layer_idx, layer in enumerate(layers):
 
         def q_hook(_module, _inputs, output, idx=layer_idx):
             view = output.detach().float().reshape(output.shape[0], output.shape[1], num_heads, head_dim)
-            attn_sums[idx].add_(view.abs().mean(dim=(0, 1, 3)))
+            attn_sums[idx].add_(view.abs().mean(dim=(0, 1, 3)).cpu())
 
         def gate_hook(_module, _inputs, output, idx=layer_idx):
-            mlp_sums[idx].add_(output.detach().float().abs().mean(dim=(0, 1)))
+            mlp_sums[idx].add_(output.detach().float().abs().mean(dim=(0, 1)).cpu())
 
         handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
         handles.append(layer.mlp.gate_proj.register_forward_hook(gate_hook))
@@ -134,6 +133,88 @@ def compute_activation_scores(
                 truncation=True,
                 max_length=max_length,
             )
+            device = next(model.parameters()).device
+            encoded = {key: value.to(device) for key, value in encoded.items()}
+            model(**encoded)
+
+    for handle in handles:
+        handle.remove()
+
+    denom = max(1, len(prompts))
+    return [
+        LayerScores(
+            layer=idx,
+            attention=(attn_sums[idx] / denom).cpu().tolist(),
+            mlp=(mlp_sums[idx] / denom).cpu().tolist(),
+        )
+        for idx in range(len(layers))
+    ]
+
+
+def compute_stage_activation_scores(
+    model,
+    tokenizer,
+    agent_path: str | Path,
+    max_length: int,
+    stages: list[str] | None = None,
+    max_batches_per_stage: int | None = None,
+) -> dict[str, list[LayerScores]]:
+    trajectories = load_agent_jsonl(agent_path)
+    grouped = iter_agent_stage_texts(trajectories, stages=stages)
+    return {
+        stage: _compute_activation_scores_for_prompts(
+            model=model,
+            tokenizer=tokenizer,
+            prompts=texts[:max_batches_per_stage] if max_batches_per_stage else texts,
+            max_length=max_length,
+        )
+        for stage, texts in grouped.items()
+        if texts
+    }
+
+
+def _compute_activation_scores_for_prompts(
+    model,
+    tokenizer,
+    prompts: list[str],
+    max_length: int,
+) -> list[LayerScores]:
+    torch = _require_torch()
+    layers = _get_decoder_layers(model)
+    attn_sums: list[Any] = []
+    mlp_sums: list[Any] = []
+    handles = []
+    num_heads = int(getattr(model.config, "num_attention_heads"))
+    hidden_size = int(getattr(model.config, "hidden_size"))
+    head_dim = hidden_size // num_heads
+    intermediate = int(getattr(model.config, "intermediate_size"))
+
+    for _ in layers:
+        attn_sums.append(torch.zeros(num_heads, device="cpu"))
+        mlp_sums.append(torch.zeros(intermediate, device="cpu"))
+
+    for layer_idx, layer in enumerate(layers):
+
+        def q_hook(_module, _inputs, output, idx=layer_idx):
+            view = output.detach().float().reshape(output.shape[0], output.shape[1], num_heads, head_dim)
+            attn_sums[idx].add_(view.abs().mean(dim=(0, 1, 3)).cpu())
+
+        def gate_hook(_module, _inputs, output, idx=layer_idx):
+            mlp_sums[idx].add_(output.detach().float().abs().mean(dim=(0, 1)).cpu())
+
+        handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
+        handles.append(layer.mlp.gate_proj.register_forward_hook(gate_hook))
+
+    model.eval()
+    with torch.no_grad():
+        for prompt in prompts:
+            encoded = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=max_length,
+            )
+            device = next(model.parameters()).device
             encoded = {key: value.to(device) for key, value in encoded.items()}
             model(**encoded)
 
@@ -180,6 +261,8 @@ def build_pruning_plan(
     weights: ScoreWeights,
     min_heads_per_layer: int,
     min_mlp_channels_per_layer: int,
+    prune_attention_heads: bool = True,
+    prune_mlp_channels: bool = True,
 ) -> dict[str, Any]:
     plan_layers = []
     for layer_scores in scores:
@@ -198,11 +281,15 @@ def build_pruning_plan(
         plan_layers.append(
             {
                 "layer": layer_scores.layer,
-                "pruned_attention_heads": select_pruned_indices(
-                    attention_importance, sparsity, min_heads_per_layer
+                "pruned_attention_heads": (
+                    select_pruned_indices(attention_importance, sparsity, min_heads_per_layer)
+                    if prune_attention_heads
+                    else []
                 ),
-                "pruned_mlp_channels": select_pruned_indices(
-                    mlp_importance, sparsity, min_mlp_channels_per_layer
+                "pruned_mlp_channels": (
+                    select_pruned_indices(mlp_importance, sparsity, min_mlp_channels_per_layer)
+                    if prune_mlp_channels
+                    else []
                 ),
                 "num_attention_heads": len(attention_importance),
                 "num_mlp_channels": len(mlp_importance),

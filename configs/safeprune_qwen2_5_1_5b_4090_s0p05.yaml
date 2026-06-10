@@ -1,0 +1,23 @@
+extends: configs/safeprune_qwen2_5_1_5b_4090_smoke.yaml
+
+experiment:
+  name: safeprune_qwen2_5_1_5b_4090_s0p05
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p05
+
+model:
+  teacher_model: outputs/safeprune_qwen2_5_1_5b_4090_smoke/dpo_teacher
+
+pruning:
+  sparsity: 0.05
+  target_sparsities: [0.05]
+  scores_dir: outputs/safeprune_qwen2_5_1_5b_4090_smoke/prune_scores
+  pruned_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p05/pruned
+
+recovery:
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p05/recovered
+
+evaluation:
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p05/eval
+
+tracking:
+  tags: ["4090", smoke, qwen2.5-1.5b, s0p05]

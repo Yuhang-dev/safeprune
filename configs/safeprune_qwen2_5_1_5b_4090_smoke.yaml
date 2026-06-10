@@ -33,3 +33,9 @@ recovery:
 
 evaluation:
   output_dir: outputs/safeprune_qwen2_5_1_5b_4090_smoke/eval
+
+tracking:
+  enabled: true
+  backend: swanlab
+  project: safeprune-dpo-4090
+  tags: ["4090", smoke, qwen2.5-1.5b]

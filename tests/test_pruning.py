@@ -7,6 +7,7 @@ from safeprune.pruning import (
     normalize_scores,
     select_pruned_indices,
 )
+from safeprune.scoring import LayerScores, build_pruning_plan
 
 
 class PruningTests(unittest.TestCase):
@@ -26,6 +27,20 @@ class PruningTests(unittest.TestCase):
             weights=ScoreWeights(magnitude=0.5, activation=0.0, loss_delta=0.5),
         )
         self.assertGreater(scores[1], scores[0])
+
+    def test_build_pruning_plan_can_disable_attention_pruning(self):
+        plan = build_pruning_plan(
+            scores=[LayerScores(layer=0, attention=[0.1, 0.2, 0.3, 0.4], mlp=[0.1, 0.2, 0.3, 0.4])],
+            sparsity=0.5,
+            weights=ScoreWeights(magnitude=1.0, activation=0.0, loss_delta=0.0),
+            min_heads_per_layer=1,
+            min_mlp_channels_per_layer=1,
+            prune_attention_heads=False,
+            prune_mlp_channels=True,
+        )
+        layer = plan["layers"][0]
+        self.assertEqual(layer["pruned_attention_heads"], [])
+        self.assertEqual(layer["pruned_mlp_channels"], [0, 1])
 
 
 if __name__ == "__main__":

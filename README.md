@@ -1,108 +1,113 @@
-# SafePrune-DPO
+# Agent FFN Pruning
 
-SafePrune-DPO is a research scaffold for studying whether a DPO-aligned
-Qwen2.5-7B-Instruct model preserves safety and preference alignment after
-25%-50% structured pruning.
+This repository studies trajectory-aware dynamic FFN pruning for reasoning and
+tool-using language agents.
 
-The intended remote workflow is:
+The current research question is:
 
-1. Train or load a DPO-aligned teacher.
-2. Compute structured pruning scores from calibration data.
-3. Apply attention-head and MLP-channel pruning masks.
-4. Recover with LoRA using DPO loss, teacher consistency, and safety replay.
-5. Evaluate capability, safety, and efficiency trade-offs.
-
-This repository keeps heavy ML dependencies optional at import time so that
-config, data, and pruning policy tests can run on a CPU-only machine.
-
-## Remote Setup
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev,eval]"
+```text
+Can Agent stage labels, observations, failure events, and difficulty signals
+allocate FFN compute better than fixed masks or hidden-state-only routing?
 ```
 
-For Linux remote servers:
+The primary metric is not raw sparsity. It is cost per successful task, measured
+with task success, tool-call validity, recovery rate, active FFN ratio, latency,
+and memory.
+
+## Current Direction
+
+The default project route is:
+
+1. Reproduce SliceGPT as the local/remote structured compression baseline.
+2. Build FFN-only static and stage-specific mask banks for Qwen2.5 models.
+3. Add rule-based failure-triggered re-densification.
+4. Compare dense, static masks, stage masks, and trajectory-aware recovery.
+5. Use Probe Pruning as the closest hidden-state-only dynamic pruning baseline.
+
+The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The
+4090 smoke results remain useful as a negative signal: attention-head pruning was
+unstable, and mask-only experiments must not be reported as real speedups.
+
+## Environment
+
+Remote smoke testing used this stack:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev,eval]"
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install \
+  transformers==4.44.2 \
+  datasets==2.21.0 \
+  peft==0.12.0 \
+  trl==0.10.1 \
+  accelerate==0.34.2 \
+  PyYAML>=6.0 \
+  swanlab==0.8.1
+pip install -e .
 ```
 
-If you already have a conda environment named `LLM` on Windows:
+For local CPU-only structural tests, do not load models and do not require a
+GPU. Use an existing Python/conda environment or create a CPU test environment:
 
 ```powershell
-$env:PYTHONPATH="D:\Prune\src"
-& "D:\anaconda3\envs\LLM\python.exe" -m unittest discover -s tests
+conda create -n prune-agent-cpu python=3.10 -y
+conda activate prune-agent-cpu
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+pip install transformers==4.44.2 datasets==2.21.0 peft==0.12.0 trl==0.10.1 accelerate==0.34.2 PyYAML swanlab==0.8.1 pytest ruff
+pip install -e .
 ```
 
-## Data Format
+Local commands should use `--skip-model-load` or `--dry-run` unless a remote GPU
+host is available.
 
-All preference files are JSONL:
+## Agent Data Format
+
+Agent tasks are JSONL rows:
 
 ```json
-{"prompt":"...","chosen":"...","rejected":"...","source":"ultrafeedback","tag":"helpfulness"}
+{"task_id":"t1","prompt":"...","steps":[{"stage":"act","text":"...","event":"tool_error"}],"answer":"...","expected":"..."}
 ```
 
-Allowed tags are `helpfulness`, `safety`, and `general`.
+Allowed stages are:
 
-Validate data before training:
+```text
+plan, act, observe, reflect, answer
+```
+
+Generate a small controlled set:
 
 ```bash
-python scripts/validate_data.py --path data/preference/train.jsonl
+python scripts/prepare_agent_tasks.py \
+  --output data/agent/controlled_tasks.jsonl \
+  --count 100
 ```
 
 ## Main Commands
 
-Train the DPO teacher:
+Build a stage-specific FFN mask bank without loading a model:
 
 ```bash
-accelerate launch scripts/train_dpo_teacher.py --config configs/safeprune_qwen2_5_7b.yaml
+python scripts/build_stage_mask_bank.py \
+  --config configs/agent_qwen2_5_1_5b_4090.yaml \
+  --skip-model-load
 ```
 
-Compute pruning scores:
+Run an Agent evaluation dry run:
 
 ```bash
-python scripts/compute_prune_scores.py --config configs/safeprune_qwen2_5_7b.yaml
+python scripts/evaluate_agent_masks.py \
+  --config configs/agent_qwen2_5_1_5b_4090.yaml \
+  --dry-run
 ```
 
-Apply pruning masks:
+Run local unit tests:
 
 ```bash
-python scripts/prune_model.py --config configs/safeprune_qwen2_5_7b.yaml
+python -m unittest discover -s tests
 ```
 
-Recover the pruned model:
+## Docs
 
-```bash
-accelerate launch scripts/recover_safeprune.py --config configs/safeprune_qwen2_5_7b.yaml
-```
-
-Run an ablation grid:
-
-```bash
-python scripts/run_ablation_grid.py --config configs/safeprune_qwen2_5_7b.yaml --dry-run
-```
-
-## Outputs
-
-The default config writes to:
-
-- `outputs/dpo_teacher`
-- `outputs/prune_scores`
-- `outputs/pruned`
-- `outputs/recovered`
-- `outputs/eval`
-
-Each run should preserve its resolved YAML config, metrics JSON, and timing
-metadata for paper reproducibility.
-
-## Experiment Roadmap
-
-See `docs/experiment_roadmap.md` for the full SafePrune-DPO experiment route,
-including current status markers and unfinished items.
-
-For a smaller two-RTX-4090 feasibility run before the A100 experiments, see
-`docs/rtx4090_feasibility_plan.md`.
+- `docs/experiment_roadmap.md`: current Agent FFN pruning roadmap.
+- `docs/rtx4090_feasibility_plan.md`: two-RTX-4090 execution plan.
+- `docs/slicegpt_repro_commands.md`: external SliceGPT reproduction commands.
+- `docs/4090_smoke_results.md`: legacy SafePrune-DPO smoke results and failure notes.

@@ -1,433 +1,155 @@
-# SafePrune-DPO 实验路线图
+# Agent 轨迹动态 FFN 剪枝实验路线图
 
-本文档是 `D:\Prune` 项目的实验执行路线。状态标记如下：
+本文档是 `D:\Prune` 当前主线。项目已从 SafePrune-DPO 对齐恢复转向：
 
-- `[DONE]`：当前项目中已有代码、配置或文档。
-- `[REMOTE]`：需要在远程 GPU 环境执行。
-- `[TODO]`：当前尚未完成，需要补代码、数据、实验或论文结果。
-- `[OPTIONAL]`：不是主线必需，但建议作为增强实验。
-
-## 0. 当前项目状态
-
-| 模块 | 状态 | 位置 | 说明 |
-|---|---|---|---|
-| 项目骨架 | `[DONE]` | `pyproject.toml`, `requirements.txt`, `README.md` | 已定义 Python 包、依赖和基础说明。 |
-| 主配置 | `[DONE]` | `configs/safeprune_qwen2_5_7b.yaml` | 已配置 Qwen2.5-7B-Instruct、DPO、剪枝、恢复和评测字段。 |
-| 消融配置 | `[DONE]` | `configs/ablations/*.yaml` | 已有 no consistency、no safety replay、prune-then-DPO 配置。 |
-| 数据校验 | `[DONE]` | `scripts/validate_data.py`, `src/safeprune/data.py` | 已支持 preference JSONL schema 校验。 |
-| DPO teacher 训练入口 | `[DONE]` | `scripts/train_dpo_teacher.py` | 远程安装 `trl/peft/accelerate` 后可运行。 |
-| 剪枝打分与 plan | `[DONE]` | `scripts/compute_prune_scores.py`, `src/safeprune/scoring.py` | 已实现 magnitude + activation；loss-delta 字段预留。 |
-| 结构化 mask | `[DONE]` | `src/safeprune/masks.py` | 已实现 attention head 和 MLP channel forward mask。 |
-| 恢复训练入口 | `[DONE]` | `scripts/recover_safeprune.py`, `src/safeprune/training.py` | 已接入 LoRA + DPO recovery；完整 SafePrune loss 仍需加强。 |
-| 评测入口 | `[TODO]` | `scripts/evaluate_model.py` | 当前只写 manifest，需要接入 lm-eval、HarmBench、AdvBench、latency。 |
-| 真实实验结果 | `[TODO]` | `outputs/`, 论文表格 | 尚未远程运行，所有论文指标待补。 |
-
-## 1. 实验目标
-
-主问题：
-
-> DPO 对齐后的 Qwen2.5-7B-Instruct 在 25%、35%、50% 结构化剪枝后，是否还能保持偏好边界和安全拒答边界？
-
-需要回答三个子问题：
-
-1. `[TODO]` 剪枝率到多少开始出现 alignment collapse？
-2. `[TODO]` teacher consistency 和 safety replay 是否能修复剪枝后的安全退化？
-3. `[TODO]` 在双 A100 预算下，能力、安全、效率的 Pareto trade-off 是什么？
-
-## 2. 远程环境准备
-
-目标环境：
-
-- `[REMOTE]` 两张 NVIDIA A100，优先按单卡 60GB 执行；论文中报告时保留 40GB 可复现下限。
-- `[REMOTE]` Python 3.10+。
-- `[REMOTE]` CUDA + PyTorch + Transformers + TRL + PEFT + Accelerate。
-
-推荐命令：
-
-```bash
-cd /path/to/Prune
-conda activate llm
-pip install -e ".[dev,eval]"
+```text
+Trajectory-Aware Dynamic FFN Pruning for Tool-Using Reasoning Agents
 ```
 
-最小环境检查：
+核心问题：
+
+> Agent 阶段、工具 observation、失败事件和难度信号，是否能比固定 mask 或 hidden-state-only 路由更有效地分配 FFN 计算？
+
+主指标：
+
+```text
+cost per successful task = total active FFN cost / successful tasks
+```
+
+## 0. 当前状态
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| 旧 4090 smoke | `[DONE]` | 证明旧 DPO/pruning 链路可运行，但 mixed attention+MLP pruning 不稳定。 |
+| Agent 数据 schema | `[DONE]` | 新增 `AgentStep` / `AgentTrajectory` JSONL loader。 |
+| Stage mask bank | `[DONE]` | 新增 FFN-only stage mask bank 数据结构与 dry-run 构建脚本。 |
+| Rule router | `[DONE]` | 新增 stage default + failure-triggered re-densification 路由器。 |
+| Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
+| SliceGPT 复现 | `[TODO]` | 外部仓库复现，不 vendoring 到本项目。 |
+| 真实 Agent generation eval | `[TODO]` | 远端接 Qwen 生成、工具执行和自动判分。 |
+| compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
+
+## 1. 为什么转向 Agent 动态 FFN
+
+旧 SafePrune-DPO 4090 smoke 的关键观察：
+
+```text
+5% MLP-only: 不崩，recovery 部分改善。
+10% MLP-only: 训练指标健康，但生成明显退化。
+10% mixed head+MLP: 接近 collapse。
+25% mixed head+MLP: 完全 collapse。
+```
+
+因此当前主线不再直接推进 25%/35%/50% mixed structured pruning。第一版只研究 FFN channel mask，并把 attention head、KV cache、安全路径和 Triton kernel 放到后续扩展。
+
+## 2. 最小复现目标：SliceGPT
+
+第一阶段复现 SliceGPT，目的不是替代本项目方法，而是建立 2x4090 上的压缩与效率测量基线。
+
+模型矩阵：
+
+| 模型 | 用途 |
+|---|---|
+| `facebook/opt-125m` | 环境和流程 smoke。 |
+| `facebook/opt-1.3b` | 小模型剪枝敏感性。 |
+| `facebook/opt-2.7b` | 中等规模趋势确认。 |
+| `microsoft/phi-2` | 跨架构确认。 |
+
+剪枝率：
+
+```text
+10%, 20%, 25%, 30%
+```
+
+记录：
+
+```text
+WikiText-2 PPL
+PIQA 或 ARC-Easy
+模型权重大小
+峰值显存
+tokens/s
+```
+
+具体命令见 `docs/slicegpt_repro_commands.md`。
+
+## 3. 本项目 MVP
+
+方法：
+
+```text
+Stage-specific FFN mask bank
+plus
+Failure-triggered re-densification
+```
+
+输入信号：
+
+| 信号 | 第一版用法 |
+|---|---|
+| `stage` | `plan/reflect` 使用低稀疏，`observe/answer` 使用高稀疏。 |
+| `event` | `tool_error/schema_error/timeout` 触发临时 re-densification。 |
+| `observation` | 第一版只通过 step text 和 event 进入统计，后续再建模。 |
+| `difficulty` | 第一版暂不训练 router，后续加入 entropy/margin/verifier。 |
+
+默认策略：
+
+| Stage | Sparsity |
+|---|---:|
+| plan | 10% |
+| act | 20% |
+| observe | 30% |
+| reflect | 10% |
+| answer | 30% |
+| failure window | 10% |
+
+## 4. 实验顺序
+
+1. `[LOCAL]` 跑单元测试和 dry-run：
 
 ```bash
-python -c "import torch, transformers, datasets, peft, trl, accelerate; print(torch.cuda.is_available())"
 python -m unittest discover -s tests
+python scripts/build_stage_mask_bank.py --config configs/agent_qwen2_5_1_5b_4090.yaml --skip-model-load
+python scripts/evaluate_agent_masks.py --config configs/agent_qwen2_5_1_5b_4090.yaml --dry-run
 ```
 
-状态：
-
-- `[DONE]` 本地轻量单元测试已可跑。
-- `[REMOTE]` 远程 ML 依赖和 GPU 可用性需要实际确认。
-
-## 3. 数据准备
-
-统一 JSONL schema：
-
-```json
-{"prompt": "...", "chosen": "...", "rejected": "...", "source": "...", "tag": "helpfulness|safety|general"}
-```
-
-需要准备的文件：
-
-| 文件 | 状态 | 用途 |
-|---|---|---|
-| `data/preference/train.jsonl` | `[TODO]` | DPO teacher 和 recovery 主训练集。 |
-| `data/preference/eval.jsonl` | `[TODO]` | DPO/recovery validation。 |
-| `data/preference/safety_replay.jsonl` | `[TODO]` | SafePrune recovery 的安全 replay。 |
-| `data/calibration/calibration.jsonl` | `[TODO]` | 剪枝打分 calibration。 |
-
-建议数据构成：
-
-- `[TODO]` Preference train：UltraFeedback 子集，建议 10k-50k pairs。
-- `[TODO]` Preference eval：从 train 同源数据留出 500-2k pairs。
-- `[TODO]` Safety replay：Harmful prompt + safe refusal pairs，建议 500-2k pairs。
-- `[TODO]` Calibration：general/helpfulness/safety 混合，512-2048 prompts。
-
-校验命令：
+2. `[REMOTE]` 复现 SliceGPT 小模型矩阵。
+3. `[REMOTE]` 生成受控 Agent 任务：
 
 ```bash
-python scripts/validate_data.py --path data/preference/train.jsonl
-python scripts/validate_data.py --path data/preference/eval.jsonl
-python scripts/validate_data.py --path data/preference/safety_replay.jsonl
-python scripts/validate_data.py --path data/calibration/calibration.jsonl
+python scripts/prepare_agent_tasks.py --count 1000
 ```
 
-未完成项：
+4. `[REMOTE]` 用 Qwen2.5-1.5B 生成 stage mask bank。
+5. `[REMOTE]` 比较 dense、static mask、stage mask、failure re-densification。
+6. `[REMOTE]` 扩到 Qwen2.5-3B。
+7. `[REMOTE]` 跑 Probe Pruning 作为 hidden-state-only 动态剪枝对照。
 
-- `[TODO]` 数据下载/筛选脚本尚未实现。
-- `[TODO]` safety replay 的 chosen/rejected 构造规则尚未固定。
-- `[TODO]` 需要记录每个数据源 license 和过滤策略，供论文附录使用。
+## 5. 必须对照
 
-## 4. Stage A：DPO Teacher
+| 方法 | 目的 |
+|---|---|
+| Dense | 任务成功率上限。 |
+| Static Global Mask | 固定 FFN mask 基线。 |
+| Stage Mask | 检查阶段语义是否有价值。 |
+| Failure Re-densification | 检查失败后恢复计算是否降低重试成本。 |
+| Hidden-State-Only Router | 对齐 Probe Pruning 式动态信号。 |
 
-目标：
+## 6. 论文边界
 
-- 得到未剪枝的 DPO-aligned teacher。
-- 作为后续 pruning/recovery 的 teacher 和 DPO-only baseline。
+当前贡献只能写成：
 
-命令：
+1. 提出 Agent 轨迹感知 FFN 动态稀疏问题。
+2. 建立阶段敏感度画像和 stage mask bank。
+3. 验证失败触发 re-densification 是否改善 recovery rate。
+4. 用 cost per successful task 评价压缩后 Agent，而不是只看 PPL 或平均 sparsity。
 
-```bash
-accelerate launch scripts/train_dpo_teacher.py \
-  --config configs/safeprune_qwen2_5_7b.yaml
-```
-
-输出：
+第一版不声称：
 
 ```text
-outputs/safeprune_qwen2_5_7b/dpo_teacher/
+真实 wall-clock speedup
+attention head 安全剪枝
+KV cache 压缩
+RL controller
+Triton kernel 优化
 ```
-
-需要记录：
-
-- `[REMOTE]` 训练 wall-clock time。
-- `[REMOTE]` 总 GPU hours。
-- `[REMOTE]` peak GPU memory。
-- `[REMOTE]` final train/eval loss。
-- `[REMOTE]` DPO reward margin。
-
-未完成项：
-
-- `[TODO]` 需要确认 `trl.DPOTrainer` 当前版本参数兼容性。
-- `[TODO]` 需要补 teacher 的 baseline eval。
-- `[TODO]` 需要保存 resolved config 和训练 metadata。
-
-## 5. Stage B：Teacher Baseline Evaluation
-
-目标：
-
-- 建立 DPO-only baseline。
-- 作为所有 pruned model 的能力、安全、效率比较基准。
-
-能力评测：
-
-```bash
-lm_eval --model hf \
-  --model_args pretrained=outputs/safeprune_qwen2_5_7b/dpo_teacher \
-  --tasks mmlu,gsm8k,bbh \
-  --batch_size auto \
-  --output_path outputs/safeprune_qwen2_5_7b/eval/dpo_teacher_capability.json
-```
-
-安全评测：
-
-```bash
-python scripts/evaluate_model.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --model outputs/safeprune_qwen2_5_7b/dpo_teacher
-```
-
-未完成项：
-
-- `[TODO]` `scripts/evaluate_model.py` 尚未真正接入 HarmBench。
-- `[TODO]` AdvBench refusal evaluator 尚未实现。
-- `[TODO]` benign over-refusal set 尚未准备。
-- `[TODO]` latency/tokens/s 脚本尚未实现。
-
-## 6. Stage C：剪枝打分与 Pruning Plan
-
-目标：
-
-- 对每层 attention heads 和 MLP intermediate channels 打分。
-- 生成 25%、35%、50% 三档剪枝 plan。
-
-命令：
-
-```bash
-python scripts/compute_prune_scores.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --with-activation \
-  --max-calibration-batches 1024
-```
-
-输出：
-
-```text
-outputs/safeprune_qwen2_5_7b/prune_scores/scores.json
-outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.25.json
-outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.35.json
-outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.50.json
-```
-
-当前打分：
-
-- `[DONE]` Weight magnitude。
-- `[DONE]` Activation sensitivity。
-- `[TODO]` Calibration loss delta。
-
-loss-delta 建议实现：
-
-1. `[TODO]` 在 calibration batch 上计算 teacher 原始 loss。
-2. `[TODO]` 对每个候选 head/channel 临时 mask。
-3. `[TODO]` 重新 forward，记录 loss increase。
-4. `[TODO]` normalize 后写入 `loss_delta_attention` / `loss_delta_mlp`。
-
-剪枝计划检查：
-
-- `[REMOTE]` 每层保留 head 数。
-- `[REMOTE]` 每层保留 MLP channel 数。
-- `[REMOTE]` 不允许某层完全塌缩。
-- `[REMOTE]` 统计不同 tag 的 calibration 是否改变 prune plan。
-
-## 7. Stage D：Prune-Only Baseline
-
-目标：
-
-- 检查不恢复时剪枝本身造成多少能力/安全退化。
-
-命令：
-
-```bash
-python scripts/prune_model.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --plan outputs/safeprune_qwen2_5_7b/prune_scores/plan_s0.25.json
-```
-
-对 0.25、0.35、0.50 各跑一次。
-
-未完成项：
-
-- `[TODO]` 当前 `prune_model.py` 保存的是 mask-compatible checkpoint；需要确认评测时 mask 是否被重新 attach。
-- `[TODO]` 物理裁剪 tensor 的实现尚未完成，因此真实 speedup 需要额外实现或报告 mask active-structure reduction。
-- `[TODO]` 需要补 `--sparsity` 或 per-plan 输出目录，避免三档结果互相覆盖。
-
-## 8. Stage E：Recovery Baselines
-
-需要跑四类 recovery：
-
-| 名称 | DPO | Teacher KL | Safety Replay | 状态 |
-|---|---:|---:|---:|---|
-| Prune + CE recovery | no | no | no | `[TODO]` |
-| Prune + DPO recovery | yes | no | no | `[REMOTE]` |
-| No teacher KL | yes | no | yes | `[REMOTE]` |
-| No safety replay | yes | yes | no | `[REMOTE]` |
-| SafePrune-DPO | yes | yes | yes | `[REMOTE]` |
-
-生成 ablation configs：
-
-```bash
-python scripts/run_ablation_grid.py \
-  --config configs/safeprune_qwen2_5_7b.yaml \
-  --write-configs
-```
-
-运行示例：
-
-```bash
-accelerate launch scripts/recover_safeprune.py \
-  --config outputs/safeprune_qwen2_5_7b/grid_configs/safeprune_dpo_s0p25.yaml
-```
-
-未完成项：
-
-- `[TODO]` 当前 recovery 主要依赖 TRL DPOTrainer；`teacher KL` 尚未实际合入 trainer loss。
-- `[TODO]` `safety_replay_weight` 当前通过 replay 数据比例体现，尚未实现单独加权 loss。
-- `[TODO]` CE recovery baseline 尚未实现。
-- `[TODO]` 需要让 grid config 同时切换不同 `plan_s0.xx.json`，当前需要核对是否总是读 `config.pruning.sparsity` 对应 plan。
-
-## 9. Stage F：主评测
-
-每个 checkpoint 都需要跑三类评测。
-
-### 9.1 Capability
-
-任务：
-
-- MMLU
-- GSM8K
-- BBH
-- `[OPTIONAL]` 中文能力集，如 CMMLU/C-Eval。
-
-输出表：
-
-| Method | Prune | MMLU | GSM8K | BBH | Chinese Avg |
-|---|---:|---:|---:|---:|---:|
-| DPO only | 0% | `[TODO]` | `[TODO]` | `[TODO]` | `[OPTIONAL]` |
-| Prune only | 25% | `[TODO]` | `[TODO]` | `[TODO]` | `[OPTIONAL]` |
-| SafePrune-DPO | 25% | `[TODO]` | `[TODO]` | `[TODO]` | `[OPTIONAL]` |
-| SafePrune-DPO | 35% | `[TODO]` | `[TODO]` | `[TODO]` | `[OPTIONAL]` |
-| SafePrune-DPO | 50% | `[TODO]` | `[TODO]` | `[TODO]` | `[OPTIONAL]` |
-
-### 9.2 Safety / Alignment
-
-任务：
-
-- HarmBench ASR，越低越好。
-- AdvBench harmful compliance rate，越低越好。
-- Refusal accuracy，越高越好。
-- Benign over-refusal rate，越低越好。
-- Preference win-rate vs teacher，越高越好。
-
-输出表：
-
-| Method | Prune | HarmBench ASR ↓ | AdvBench ASR ↓ | Refusal Acc ↑ | Over-refusal ↓ | Win-rate vs Teacher ↑ |
-|---|---:|---:|---:|---:|---:|---:|
-| DPO only | 0% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| Prune + DPO recovery | 25% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 25% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 35% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 50% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-
-### 9.3 Efficiency
-
-指标：
-
-- Active attention heads。
-- Active MLP channels。
-- Parameter count after physical slicing。
-- Peak GPU memory。
-- Tokens/s。
-- End-to-end latency。
-- Training GPU hours。
-
-输出表：
-
-| Method | Prune | Active Heads | Active MLP Ch. | Peak Mem | Tokens/s | Latency | GPUh |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| DPO only | 0% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 25% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 35% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| SafePrune-DPO | 50% | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-
-未完成项：
-
-- `[TODO]` latency benchmark 脚本。
-- `[TODO]` physical slicing 后的真实 speedup。
-- `[TODO]` 统一 metrics JSON 聚合脚本。
-
-## 10. Stage G：消融实验
-
-必须完成：
-
-1. `[REMOTE]` Pruning rate：25%、35%、50%。
-2. `[REMOTE]` Remove teacher KL。
-3. `[REMOTE]` Remove safety replay。
-4. `[REMOTE]` DPO recovery vs SafePrune-DPO。
-5. `[REMOTE]` General-only calibration vs general+safety calibration。
-
-建议完成：
-
-1. `[OPTIONAL]` LoRA rank：8、16、32。
-2. `[OPTIONAL]` Replay ratio：0%、10%、20%、40%。
-3. `[OPTIONAL]` Qwen2.5-1.5B/3B sanity check。
-4. `[OPTIONAL]` Random pruning baseline。
-
-未完成项：
-
-- `[TODO]` random pruning plan 生成器。
-- `[TODO]` calibration source ablation 配置。
-- `[TODO]` LoRA rank/replay ratio grid 配置。
-
-## 11. Stage H：错误分析
-
-需要人工或半自动分析以下失败类型：
-
-| 类型 | 判断标准 | 状态 |
-|---|---|---|
-| Harmful compliance | 对 harmful prompt 给出可执行有害内容 | `[TODO]` |
-| Benign over-refusal | 对普通请求错误拒答 | `[TODO]` |
-| Reasoning degradation | 数学/推理能力明显退化 | `[TODO]` |
-| Preference drift | 相比 teacher 更偏向 rejected answer | `[TODO]` |
-| Format drift | 输出格式不稳定或 instruction following 失败 | `[TODO]` |
-
-输出：
-
-- `[TODO]` 每类失败 5-10 个代表样例。
-- `[TODO]` 错误类型占比表。
-- `[TODO]` 25%、35%、50% 的 collapse 边界分析。
-
-## 12. Stage I：论文补表与结论
-
-目标论文路径：
-
-- `D:\SafePrune-dpo\main.tex`
-
-需要补入：
-
-1. `[TODO]` 主结果表。
-2. `[TODO]` safety/alignment 表。
-3. `[TODO]` efficiency 表。
-4. `[TODO]` ablation 表。
-5. `[TODO]` Pareto frontier 图。
-6. `[TODO]` failure case 表。
-7. `[TODO]` 最终 abstract 数字结果。
-8. `[TODO]` conclusion 中的实证结论。
-
-当前论文状态：
-
-- `[DONE]` AAAI 2026 LaTeX 格式初稿已生成。
-- `[DONE]` 正文结构已完整。
-- `[TODO]` 实验结果全部待补。
-
-## 13. 最小可投稿实验集
-
-如果时间紧，至少完成以下实验：
-
-1. `[REMOTE]` DPO teacher baseline。
-2. `[REMOTE]` SafePrune-DPO 25%、35%、50%。
-3. `[REMOTE]` Prune + DPO recovery 25%、35%。
-4. `[REMOTE]` No safety replay 35%。
-5. `[REMOTE]` MMLU/GSM8K + HarmBench/AdvBench + tokens/s。
-6. `[TODO]` 失败案例分析，尤其是 50% collapse。
-
-这组实验可以支撑核心论点：
-
-> Moderate structured pruning can preserve most capability, but alignment safety degrades earlier unless recovery includes teacher consistency and safety replay.
-
-该句目前仍是待验证假设，不能在论文中写成结论，直到实验结果支持。
-
-## 14. 当前最高优先级 TODO
-
-1. `[TODO]` 准备四个 JSONL 数据文件并通过 `validate_data.py`。
-2. `[TODO]` 在远程环境安装 `peft/trl/accelerate/lm-eval/HarmBench`。
-3. `[REMOTE]` 跑 DPO teacher。
-4. `[TODO]` 实现或接入 HarmBench/AdvBench/refusal/latency 评测脚本。
-5. `[REMOTE]` 跑 `compute_prune_scores.py --with-activation`。
-6. `[TODO]` 补 loss-delta scoring。
-7. `[TODO]` 补真正的 SafePrune weighted loss，而不是只依赖 DPOTrainer + replay mix。
-8. `[REMOTE]` 跑 25%、35%、50% 主实验。
-9. `[TODO]` 聚合 metrics，填入论文。
-

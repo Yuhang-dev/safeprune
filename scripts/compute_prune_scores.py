@@ -63,6 +63,8 @@ def main() -> None:
                 weights=ScoreWeights.from_mapping(config.pruning.score_weights),
                 min_heads_per_layer=config.pruning.min_heads_per_layer,
                 min_mlp_channels_per_layer=config.pruning.min_mlp_channels_per_layer,
+                prune_attention_heads=config.pruning.prune_attention_heads,
+                prune_mlp_channels=config.pruning.prune_mlp_channels,
             )
             save_plan(plan, out_dir / f"plan_s{sparsity:.2f}.json")
 

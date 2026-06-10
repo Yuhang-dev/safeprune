@@ -135,6 +135,75 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
+class AgentConfig:
+    task_path: str = "data/agent/controlled_tasks.jsonl"
+    calibration_path: str | None = None
+    mask_bank_dir: str = "outputs/agent/mask_bank"
+    stages: list[str] = field(
+        default_factory=lambda: ["plan", "act", "observe", "reflect", "answer"]
+    )
+    target_sparsities: list[float] = field(default_factory=lambda: [0.10, 0.20, 0.30])
+    stage_sparsities: dict[str, float] = field(
+        default_factory=lambda: {
+            "plan": 0.10,
+            "act": 0.20,
+            "observe": 0.30,
+            "reflect": 0.10,
+            "answer": 0.30,
+        }
+    )
+    failure_sparsity: float = 0.10
+    default_sparsity: float = 0.30
+    recovery_window_steps: int = 2
+    failure_events: list[str] = field(
+        default_factory=lambda: [
+            "tool_error",
+            "invalid_json",
+            "schema_error",
+            "timeout",
+            "empty_observation",
+            "verifier_failure",
+        ]
+    )
+    mask_granularity: int = 1
+
+    def validate(self) -> None:
+        if not self.stages:
+            raise ValueError("agent.stages must not be empty.")
+        invalid = [stage for stage in self.stage_sparsities if stage not in self.stages]
+        if invalid:
+            raise ValueError(f"agent.stage_sparsities contains unknown stages: {invalid}")
+        for value in [*self.target_sparsities, *self.stage_sparsities.values(), self.failure_sparsity]:
+            if not 0.0 <= float(value) < 1.0:
+                raise ValueError("agent sparsity values must be in [0, 1).")
+        if self.recovery_window_steps < 0:
+            raise ValueError("agent.recovery_window_steps must be non-negative.")
+        if self.mask_granularity < 1:
+            raise ValueError("agent.mask_granularity must be positive.")
+
+
+@dataclass(frozen=True)
+class TrackingConfig:
+    enabled: bool = False
+    backend: str = "none"
+    project: str = "safeprune-dpo"
+    workspace: str | None = None
+    experiment_name: str | None = None
+    description: str | None = None
+    mode: str | None = None
+    logdir: str | None = None
+    tags: list[str] = field(default_factory=list)
+
+    def validate(self) -> None:
+        if self.backend not in {"none", "swanlab"}:
+            raise ValueError("tracking.backend must be one of: none, swanlab.")
+        if self.mode not in {None, "online", "local", "offline", "disabled"}:
+            raise ValueError("tracking.mode must be one of: online, local, offline, disabled.")
+        if any(not isinstance(tag, str) for tag in self.tags):
+            raise ValueError("tracking.tags must contain only strings.")
+
+
+@dataclass(frozen=True)
 class SafePruneConfig:
     experiment: ExperimentConfig
     model: ModelConfig
@@ -143,6 +212,8 @@ class SafePruneConfig:
     pruning: PruningConfig = field(default_factory=PruningConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    tracking: TrackingConfig = field(default_factory=TrackingConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "SafePruneConfig":
@@ -154,11 +225,14 @@ class SafePruneConfig:
             pruning=PruningConfig(**raw.get("pruning", {})),
             recovery=RecoveryConfig(**raw.get("recovery", {})),
             evaluation=EvaluationConfig(**raw.get("evaluation", {})),
+            agent=AgentConfig(**raw.get("agent", {})),
+            tracking=TrackingConfig(**raw.get("tracking", {})),
         )
         config.pruning.validate()
+        config.agent.validate()
+        config.tracking.validate()
         return config
 
 
 def load_config(path: str | Path) -> SafePruneConfig:
     return SafePruneConfig.from_dict(load_config_dict(path))
-

@@ -32,6 +32,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.pruning.target_sparsities, [0.25, 0.35])
         self.assertEqual(config.recovery.lora_r, 16)
 
+    def test_agent_4090_config_uses_ffn_only_pruning(self):
+        config = load_config(Path("configs") / "agent_qwen2_5_1_5b_4090.yaml")
+        self.assertEqual(config.model.base_model, "Qwen/Qwen2.5-1.5B-Instruct")
+        self.assertFalse(config.pruning.prune_attention_heads)
+        self.assertEqual(config.agent.stage_sparsities["reflect"], 0.10)
+        self.assertEqual(config.agent.mask_bank_dir, "outputs/agent_qwen2_5_1_5b_4090/mask_bank")
+
 
 if __name__ == "__main__":
     unittest.main()

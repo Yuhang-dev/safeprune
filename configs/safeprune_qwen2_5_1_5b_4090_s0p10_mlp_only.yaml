@@ -1,0 +1,25 @@
+extends: configs/safeprune_qwen2_5_1_5b_4090_smoke.yaml
+
+experiment:
+  name: safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only
+
+model:
+  teacher_model: outputs/safeprune_qwen2_5_1_5b_4090_smoke/dpo_teacher
+
+pruning:
+  sparsity: 0.10
+  target_sparsities: [0.10]
+  prune_attention_heads: false
+  prune_mlp_channels: true
+  scores_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only/prune_scores
+  pruned_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only/pruned
+
+recovery:
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only/recovered
+
+evaluation:
+  output_dir: outputs/safeprune_qwen2_5_1_5b_4090_s0p10_mlp_only/eval
+
+tracking:
+  tags: ["4090", smoke, qwen2.5-1.5b, s0p10, mlp-only]
