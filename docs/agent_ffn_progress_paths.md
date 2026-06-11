@@ -244,21 +244,131 @@ ok = expected in prediction
 
 ### 2.2 P0：重新定义可用稀疏率边界
 
-当前实验已证明 10%-30% 不适合作为第一阶段主区间。下一步应改为：
+当前实验已证明 10%-30% 不适合作为第一阶段主区间。已重跑低稀疏：
 
 ```text
 1%, 2%, 3%, 5%
 ```
 
-建议方法矩阵：
+100 条严格评测结论：
 
-| 方法 | 目的 |
-|---|---|
-| dense | 上限和 prompt 自洽性 |
-| identity_hook | 验证 hook 不改变模型 |
-| static_01 / static_02 / static_03 / static_05 | 找 naive mask 可用边界 |
-| stage_answer_01 / stage_answer_03 / stage_answer_05 | 看 stage mask 是否优于 static |
-| failure_redensification_05_to_01 | 看失败恢复是否改善成本 |
+```text
+dense: 93/100
+identity_hook: 93/100
+static_plan_0.01: 65/100
+stage_observe_0.01: 79/100
+stage_answer_0.01: 72/100
+stage_answer_0.02: 53/100
+stage_answer_0.03: 46/100
+```
+
+结论：
+
+```text
+stage signal exists, but full per-layer 1% mask is still too destructive.
+Do not continue sweeping full per-layer sparsity.
+```
+
+保存路径见：
+
+```text
+docs/agent_mask_eval_results.md
+```
+
+### 2.2.1 P0：safe-layer-only 与 global layer-wise budget
+
+Layer sensitivity 已显示：
+
+```text
+dense: 49/50
+identity_hook: 49/50
+full_stage_observe_0.01: 38/50
+single-layer observe 0.01: mostly 48/50 or 49/50
+```
+
+这说明主要问题是 36 层同时剪枝的累积扰动，而不是某一层单剪必崩。
+
+已测试 safe-layer-only：
+
+```text
+safe layers: [3, 6, 7, 8, 9, 10, 14, 15, 18, 23, 28, 30, 34]
+source mask: stage_observe
+```
+
+方法：
+
+| Method | 做法 | 近似全局 FFN 稀疏率 |
+|---|---|---:|
+| safe13_observe_0.01 | 只在 13 个安全层剪 1% | 0.36% |
+| safe13_observe_0.02 | 只在 13 个安全层剪 2% | 0.72% |
+| safe13_observe_0.03 | 只在 13 个安全层剪 3% | 1.08% |
+
+结果：
+
+| Method | Correct | Active FFN ratio |
+|---|---:|---:|
+| dense | 97/100 | 1.0000 |
+| identity_hook | 97/100 | 1.0000 |
+| full_stage_observe_0.01 | 86/100 | 0.9900 |
+| safe13_observe_0.01 | 96/100 | 0.9964 |
+| safe13_observe_0.02 | 91/100 | 0.9928 |
+| safe13_observe_0.03 | 89/100 | 0.9892 |
+
+保存路径：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_lookupfixed_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_lookupfixed_100_metrics.json
+logs/safe_layer_observe_compare_100_<timestamp>.log
+```
+
+判断：
+
+```text
+safe13_observe_0.01 几乎贴近 dense。
+safe13_observe_0.03 高于 full_stage_observe_0.01，但仍明显低于 dense。
+safe-layer-only 证明安全层选择有效，但简单把 13 个安全层统一拉到 3% 还不够。
+```
+
+随后已测试真正的 global layer-wise budget。三种 allocation 都保持近似 1% global budget：
+
+```text
+active FFN ratio: 0.9900
+pruned channels: 3960
+```
+
+结果：
+
+| Method | Correct | Active FFN ratio | 说明 |
+|---|---:|---:|---|
+| full_stage_observe_0.01 | 86/100 | 0.9900 | 36 层平均剪 1% |
+| safe13_observe_0.03 | 89/100 | 0.9892 | 13 个安全层统一剪 3% |
+| global_spread_observe_approx_0.01 | 87/100 | 0.9900 | safe13 剪 2%，另加 10 个次安全层剪 1% |
+| global_balanced_observe_approx_0.01 | 95/100 | 0.9900 | 最安全 8 层剪 3%，其余 12 层剪 1% |
+| global_concentrated_observe_approx_0.01 | 95/100 | 0.9900 | 最安全 7 层剪 5%，另 1 层剪 1% |
+| dense | 97/100 | 1.0000 | baseline |
+
+保存路径：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100_plans.json
+logs/global_layerwise_observe_compare_100_20260611_194733.log
+```
+
+最终判断：
+
+```text
+小实验成功。
+stage_observe 信号有效。
+per-layer fixed budget 是主要失败点。
+safe-layer-only 能显著缓解退化。
+global_balanced / global_concentrated 在同样 1% global budget 下达到 95/100，
+明显优于 full_stage_observe_0.01 的 86/100，接近 dense 的 97/100。
+```
 
 ### 2.3 P1：实现真实 Agent evaluation loop
 
@@ -477,7 +587,7 @@ docs/rtx4090_feasibility_plan.md          # 2x4090 执行计划
 docs/remote_workflow.md                   # 远端运行 checklist
 docs/slicegpt_repro_commands.md           # SliceGPT 复现命令
 docs/slicegpt_2x4090_results.md           # 待新增：SliceGPT 远端结果
-docs/agent_mask_eval_results.md           # 待新增：Agent mask 远端结果
+docs/agent_mask_eval_results.md           # Agent mask 严格评测结果与下一步诊断
 ```
 
 ### 远端应生成
@@ -489,9 +599,14 @@ outputs/agent_qwen2_5_3b_4090/mask_bank/mask_bank.json
 outputs/agent_qwen2_5_3b_4090_s0p05/mask_bank/mask_bank.json
 outputs/agent_qwen2_5_3b_4090_s0p05/eval/predictions.jsonl
 outputs/agent_qwen2_5_3b_4090_s0p05/eval/metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_lookupfixed_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/safe_layer_observe_compare_lookupfixed_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/global_layerwise_observe_compare_100_plans.json
 logs/*.log
 ```
 
 ## 6. 一句话结论
 
-目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的代码骨架、文档路线、远端环境、任务数据和 1.5B/3B stage mask bank 生成。但真实方法有效性尚未证明；已有实验反而说明 Qwen2.5-3B 对 naive FFN channel masking 很敏感。下一步必须先完成 SwiGLU activation scoring 修正、严格判分和 1%-5% 低稀疏边界扫描，再判断 stage-aware 与 failure re-densification 是否有论文价值。
+目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的代码骨架、文档路线、远端环境、任务数据、1.5B/3B stage mask bank、严格低稀疏评测、layer sensitivity、safe-layer-only 和 global layer-wise 小实验。关键结论是：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但 `stage_observe` 信号有效，且基于 layer sensitivity 的 global layer-wise allocation 能在约 1% global budget 下把结果从 full 1% 的 86/100 提升到 95/100，接近 dense 的 97/100。下一步应把临时 global layer-wise allocation 固化为正式 budget allocator，再推进 stage-aware dynamic routing 与 failure re-densification。

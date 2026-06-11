@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -74,3 +75,27 @@ def compute_trajectory_metrics(results: list[TrajectoryRunResult]) -> Trajectory
         active_ffn_cost=active_ffn_cost,
         cost_per_success=active_ffn_cost / successes if successes else None,
     )
+
+
+def strict_agent_answer_correct(tool: str, expected: str, prediction: str) -> bool:
+    text = prediction.strip()
+    if tool == "lookup":
+        match = re.search(r"\bowner_\d+\b", text)
+        return bool(match and match.group(0) == expected)
+
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return False
+    try:
+        predicted = float(match.group(0))
+        target = float(expected)
+    except ValueError:
+        return False
+    return predicted == target
+
+
+def is_generation_collapse(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return len(stripped) >= 40 and len(set(stripped)) <= 4

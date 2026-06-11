@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,16 +72,75 @@ class StageMaskBank:
             raise KeyError(f"No mask plan for stage={stage!r}, sparsity={key}")
         return stage_plans[key]
 
+    def compose_layerwise_plan(
+        self,
+        stage: str,
+        layer_sparsities: dict[int, float],
+    ) -> dict[str, Any]:
+        stage_plans = self.plans.get(stage)
+        if not stage_plans:
+            raise KeyError(f"No mask plans for stage {stage!r}")
+
+        base_key = sorted(stage_plans)[0]
+        base = deepcopy(stage_plans[base_key])
+        layers = base.get("layers", [])
+        layer_indices = {int(layer["layer"]) for layer in layers}
+
+        source_by_sparsity: dict[str, dict[int, dict[str, Any]]] = {}
+        normalized: dict[int, float] = {}
+        for raw_layer_idx, raw_sparsity in layer_sparsities.items():
+            layer_idx = int(raw_layer_idx)
+            if layer_idx not in layer_indices:
+                raise IndexError(f"Layer {layer_idx} is not present in stage {stage!r}")
+
+            sparsity = float(raw_sparsity)
+            if sparsity < 0.0:
+                raise ValueError("Layer sparsity must be non-negative.")
+            normalized[layer_idx] = sparsity
+
+            if sparsity == 0.0:
+                continue
+            key = sparsity_key(sparsity)
+            if key not in stage_plans:
+                raise KeyError(f"No mask plan for stage={stage!r}, sparsity={key}")
+            if key not in source_by_sparsity:
+                source_by_sparsity[key] = {
+                    int(layer["layer"]): layer
+                    for layer in stage_plans[key].get("layers", [])
+                }
+
+        for layer in layers:
+            layer_idx = int(layer["layer"])
+            sparsity = normalized.get(layer_idx, 0.0)
+            layer["pruned_attention_heads"] = []
+            if sparsity == 0.0:
+                layer["pruned_mlp_channels"] = []
+                continue
+            source = source_by_sparsity[sparsity_key(sparsity)][layer_idx]
+            layer["pruned_mlp_channels"] = list(source.get("pruned_mlp_channels", []))
+
+        base["stage"] = stage
+        base["mask_type"] = "ffn_channel_forward_mask"
+        base["allocation"] = {
+            str(layer_idx): sparsity
+            for layer_idx, sparsity in sorted(normalized.items())
+            if sparsity > 0.0
+        }
+        return base
+
     def active_mlp_ratio(self, stage: str, sparsity: float) -> float:
-        plan = self.select(stage, sparsity)
-        total = 0
-        active = 0
-        for layer in plan["layers"]:
-            channels = int(layer["num_mlp_channels"])
-            pruned = len(layer.get("pruned_mlp_channels", []))
-            total += channels
-            active += channels - pruned
-        return active / total if total else 0.0
+        return active_mlp_ratio_from_plan(self.select(stage, sparsity))
+
+
+def active_mlp_ratio_from_plan(plan: dict[str, Any]) -> float:
+    total = 0
+    active = 0
+    for layer in plan["layers"]:
+        channels = int(layer["num_mlp_channels"])
+        pruned = len(layer.get("pruned_mlp_channels", []))
+        total += channels
+        active += channels - pruned
+    return active / total if total else 0.0
 
 
 def save_stage_mask_bank(mask_bank: StageMaskBank, path: str | Path) -> None:
