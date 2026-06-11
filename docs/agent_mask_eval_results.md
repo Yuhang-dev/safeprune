@@ -825,7 +825,8 @@ stage_observe 的通道重要性信号可以继续作为后续方法的基础。
 同时，`global_spread` 只有 87/100，说明不是“多找一些层平均分配”就能解决问题。
 真正有效的是优先把 budget 分给最安全层，并且避免把低置信度层纳入全局预算。
 
-后续工程化：把临时 global allocation 固化成正式的 budget allocator。
+后续工程化已完成：临时 global allocation 已固化进正式 evaluator，并进一步补了
+stage-aware 与 failure re-densification 的初步对照。
 
 做法：
 
@@ -836,7 +837,74 @@ stage_observe 的通道重要性信号可以继续作为后续方法的基础。
 4. 不再固定每层剪同样数量。
 ```
 
-第三步：引入更强 baseline 或恢复机制。
+### 7.8 Stage-aware 与 failure re-densification 初步结果
+
+正式 evaluator 已支持：
+
+```text
+stage_global_balanced_approx_0.01
+failure_redense_global_balanced_approx_0.01
+```
+
+其中：
+
+```text
+stage_global_balanced_approx_0.01:
+按 trajectory step 的 stage 选择对应 stage-specific global_balanced plan，
+最终 answer 生成使用 answer stage plan，active cost 按全轨迹 step 平均。
+
+failure_redense_global_balanced_approx_0.01:
+使用 FFNMaskRouter。
+正常 step 使用 stage-specific global_balanced plan。
+failure / recovery window 内切到 dense fallback。
+```
+
+远端保存路径：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100_plans.json
+logs/stage_failure_official_v2_100_20260611_202211.log
+```
+
+汇总结果：
+
+| Method | Correct | Accuracy | Active FFN ratio | Collapse |
+|---|---:|---:|---:|---:|
+| dense | 97/100 | 0.97 | 1.0000 | 0 |
+| identity_hook | 97/100 | 0.97 | 1.0000 | 0 |
+| global_balanced_observe_approx_0.01 | 95/100 | 0.95 | 0.9900 | 0 |
+| stage_global_balanced_approx_0.01 | 96/100 | 0.96 | 0.9900 | 0 |
+| failure_redense_global_balanced_approx_0.01 | 97/100 | 0.97 | 0.9980 | 0 |
+
+分工具结果：
+
+| Method | calculator | lookup | unit_convert |
+|---|---:|---:|---:|
+| dense | 32/34 | 33/33 | 32/33 |
+| identity_hook | 32/34 | 33/33 | 32/33 |
+| global_balanced_observe_approx_0.01 | 31/34 | 33/33 | 31/33 |
+| stage_global_balanced_approx_0.01 | 33/34 | 33/33 | 30/33 |
+| failure_redense_global_balanced_approx_0.01 | 33/34 | 33/33 | 31/33 |
+
+结论：
+
+```text
+stage-aware dynamic plan 在同样 0.9900 active FFN ratio 下达到 96/100，
+高于 observe-only global_balanced 的 95/100。
+
+failure re-densification 达到 97/100，追平 dense，
+但 active FFN ratio 上升到 0.9980。
+```
+
+这说明 stage-aware 与 failure feedback 方向有继续价值；但当前实现仍是
+mask-based algorithm validation，不能解释为真实 wall-clock speedup。
+下一步应把 recovery_success_rate、cost_per_success 和失败子集指标正式化。
+
+### 7.9 后续增强
+
+引入更强 baseline 或恢复机制。
 
 参考 Qwen2.5-3B 压缩顺序论文的启发，后续可以补：
 
@@ -876,6 +944,10 @@ global_balanced_observe_approx_0.01 和 global_concentrated_observe_approx_0.01
 在同样 0.9900 active FFN ratio 下达到 95/100，
 明显优于 full_stage_observe_0.01 的 86/100。
 
-因此下一阶段应把临时 global layer-wise allocation 固化为正式 budget allocator，
-再进入 stage-aware dynamic routing 和 failure re-densification。
+正式 evaluator 工程化后，stage/failure 初步对照继续支持该方向：
+stage_global_balanced_approx_0.01 达到 96/100，
+failure_redense_global_balanced_approx_0.01 以 0.9980 active FFN ratio 达到 97/100。
+
+因此下一阶段应正式化 recovery_success_rate、cost_per_success 和失败子集指标，
+再决定是否扩展到更大任务集或 7B。
 ```

@@ -407,7 +407,7 @@ cost_per_success
 generation_collapse_rate
 ```
 
-### 2.4 P1：补 stage-aware 与 failure re-densification 的真实对照
+### 2.4 P1：stage-aware 与 failure re-densification 初步对照
 
 技术报告的核心不是“有 stage mask bank”，而是：
 
@@ -415,14 +415,41 @@ generation_collapse_rate
 stage 信息和失败反馈是否改善每个成功任务的成本？
 ```
 
-因此必须补以下对照：
+已补初步对照：
 
 | 对照 | 要回答的问题 |
 |---|---|
-| static global vs stage mask | 阶段标签本身是否有价值 |
-| stage mask vs failure re-densification | 失败后恢复计算是否有价值 |
-| fixed low sparsity vs dynamic fallback | 动态恢复是否只是始终低稀疏率的替代 |
-| dense vs mask | mask 是否引入生成崩溃 |
+| global_balanced_observe_approx_0.01 | observe-only global budget baseline |
+| stage_global_balanced_approx_0.01 | stage-specific global budget 是否更好 |
+| failure_redense_global_balanced_approx_0.01 | 失败/恢复窗口 dense fallback 是否恢复成功率 |
+| dense / identity_hook | 上限与 hook 污染检查 |
+
+远端保存路径：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_v2_100_plans.json
+logs/stage_failure_official_v2_100_20260611_202211.log
+```
+
+结果：
+
+| Method | Correct | Active FFN ratio |
+|---|---:|---:|
+| dense | 97/100 | 1.0000 |
+| identity_hook | 97/100 | 1.0000 |
+| global_balanced_observe_approx_0.01 | 95/100 | 0.9900 |
+| stage_global_balanced_approx_0.01 | 96/100 | 0.9900 |
+| failure_redense_global_balanced_approx_0.01 | 97/100 | 0.9980 |
+
+判断：
+
+```text
+stage-aware dynamic plan 在同样 active FFN ratio 下优于 observe-only global baseline。
+failure re-densification 追平 dense，但 active FFN ratio 上升。
+下一步应正式化 recovery_success_rate、cost_per_success 和失败子集指标。
+```
 
 ### 2.5 P1：SliceGPT 复现路径
 
@@ -609,4 +636,4 @@ logs/*.log
 
 ## 6. 一句话结论
 
-目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的代码骨架、文档路线、远端环境、任务数据、1.5B/3B stage mask bank、严格低稀疏评测、layer sensitivity、safe-layer-only 和 global layer-wise 小实验。关键结论是：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但 `stage_observe` 信号有效，且基于 layer sensitivity 的 global layer-wise allocation 能在约 1% global budget 下把结果从 full 1% 的 86/100 提升到 95/100，接近 dense 的 97/100。下一步应把临时 global layer-wise allocation 固化为正式 budget allocator，再推进 stage-aware dynamic routing 与 failure re-densification。
+目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的代码骨架、文档路线、远端环境、任务数据、1.5B/3B stage mask bank、严格低稀疏评测、layer sensitivity、safe-layer-only、global layer-wise 小实验、正式 evaluator 工程化，以及 stage-aware / failure re-densification 初步对照。关键结论是：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但 `stage_observe` 和 stage-specific mask 信号有效；基于 layer sensitivity 的 global layer-wise allocation 能在约 1% global budget 下把结果从 full 1% 的 86/100 提升到 95/100；stage-aware dynamic plan 进一步到 96/100，failure re-densification 以 0.9980 active FFN ratio 追平 dense 的 97/100。下一步应正式化 recovery_success_rate、cost_per_success 和失败子集指标，再决定是否扩展到更大任务集或 7B。

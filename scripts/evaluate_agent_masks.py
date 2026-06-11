@@ -15,6 +15,7 @@ from safeprune.evaluation import (
     strict_agent_answer_correct,
 )
 from safeprune.masks import attach_qwen_switchable_mlp_masks
+from safeprune.router import FFNMaskRouter
 from safeprune.stage_masks import (
     StageMaskBank,
     active_mlp_ratio_from_plan,
@@ -33,7 +34,10 @@ METHODS = [
     "global_spread_observe_approx_0.01",
     "global_balanced_observe_approx_0.01",
     "global_concentrated_observe_approx_0.01",
+    "stage_global_balanced_approx_0.01",
+    "failure_redense_global_balanced_approx_0.01",
 ]
+AGENT_STAGES = ["plan", "act", "observe", "reflect", "answer"]
 
 
 def _dry_run_results() -> list[TrajectoryRunResult]:
@@ -88,47 +92,89 @@ def _global_concentrated_allocation() -> dict[int, float]:
     return allocation
 
 
-def _build_method_plans(bank: StageMaskBank) -> dict[str, dict[str, Any] | None]:
-    observe_001 = bank.select("observe", 0.01)
+def _stage_plans(bank: StageMaskBank, allocation: dict[int, float]) -> dict[str, dict[str, Any]]:
     return {
-        "dense": None,
-        "identity_hook": _empty_plan_like(observe_001),
-        "full_stage_observe_0.01": _full_stage_observe_plan(bank),
-        "safe13_observe_0.03": _safe13_observe_plan(bank),
-        "global_spread_observe_approx_0.01": bank.compose_layerwise_plan(
-            "observe",
-            _global_spread_allocation(),
-        ),
-        "global_balanced_observe_approx_0.01": bank.compose_layerwise_plan(
-            "observe",
-            _global_balanced_allocation(),
-        ),
-        "global_concentrated_observe_approx_0.01": bank.compose_layerwise_plan(
-            "observe",
-            _global_concentrated_allocation(),
+        stage: bank.compose_layerwise_plan(stage, allocation)
+        for stage in AGENT_STAGES
+        if stage in bank.plans
+    }
+
+
+def _build_method_specs(bank: StageMaskBank, config) -> dict[str, dict[str, Any]]:
+    observe_001 = bank.select("observe", 0.01)
+    identity = _empty_plan_like(observe_001)
+    balanced_stage_plans = _stage_plans(bank, _global_balanced_allocation())
+    return {
+        "dense": {"mode": "static", "plan": None},
+        "identity_hook": {"mode": "static", "plan": identity},
+        "full_stage_observe_0.01": {"mode": "static", "plan": _full_stage_observe_plan(bank)},
+        "safe13_observe_0.03": {"mode": "static", "plan": _safe13_observe_plan(bank)},
+        "global_spread_observe_approx_0.01": {
+            "mode": "static",
+            "plan": bank.compose_layerwise_plan("observe", _global_spread_allocation()),
+        },
+        "global_balanced_observe_approx_0.01": {
+            "mode": "static",
+            "plan": bank.compose_layerwise_plan("observe", _global_balanced_allocation()),
+        },
+        "global_concentrated_observe_approx_0.01": {
+            "mode": "static",
+            "plan": bank.compose_layerwise_plan("observe", _global_concentrated_allocation()),
+        },
+        "stage_global_balanced_approx_0.01": {
+            "mode": "stage_dynamic",
+            "stage_plans": balanced_stage_plans,
+            "default_stage": "answer",
+        },
+        "failure_redense_global_balanced_approx_0.01": {
+            "mode": "failure_redense_dynamic",
+            "stage_plans": balanced_stage_plans,
+            "fallback_plan": identity,
+            "default_stage": "answer",
+            "failure_events": list(config.agent.failure_events),
+            "recovery_window_steps": config.agent.recovery_window_steps,
+        },
+    }
+
+
+def _plan_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
+    if plan is None:
+        return {
+            "active_ratio": 1.0,
+            "allocation": None,
+            "pruned_channels": 0,
+            "note": "No hook is attached for this method.",
+        }
+    return {
+        "active_ratio": active_mlp_ratio_from_plan(plan),
+        "allocation": plan.get("allocation"),
+        "pruned_channels": sum(
+            len(layer.get("pruned_mlp_channels", []))
+            for layer in plan["layers"]
         ),
     }
 
 
-def _plan_manifest(method_plans: dict[str, dict[str, Any] | None]) -> dict[str, dict[str, Any]]:
+def _plan_manifest(method_specs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     manifest = {}
-    for method, plan in method_plans.items():
-        if plan is None:
-            manifest[method] = {
-                "active_ratio": 1.0,
-                "allocation": None,
-                "pruned_channels": 0,
-                "note": "No hook is attached for this method.",
-            }
+    for method, spec in method_specs.items():
+        if spec["mode"] == "static":
+            manifest[method] = {"mode": "static", **_plan_summary(spec["plan"])}
             continue
+
+        stage_plans = spec["stage_plans"]
         manifest[method] = {
-            "active_ratio": active_mlp_ratio_from_plan(plan),
-            "allocation": plan.get("allocation"),
-            "pruned_channels": sum(
-                len(layer.get("pruned_mlp_channels", []))
-                for layer in plan["layers"]
-            ),
+            "mode": spec["mode"],
+            "default_stage": spec["default_stage"],
+            "stages": {
+                stage: _plan_summary(plan)
+                for stage, plan in sorted(stage_plans.items())
+            },
         }
+        if spec["mode"] == "failure_redense_dynamic":
+            manifest[method]["fallback"] = _plan_summary(spec["fallback_plan"])
+            manifest[method]["failure_events"] = spec["failure_events"]
+            manifest[method]["recovery_window_steps"] = spec["recovery_window_steps"]
     manifest["_note"] = {
         "latency": "Forward hooks do not physically shrink GEMMs; latency is not speedup evidence."
     }
@@ -251,11 +297,107 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _stage_plan_for_task(
+    task: AgentTrajectory,
+    stage_plans: dict[str, dict[str, Any]],
+    default_stage: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
+    trace = []
+    selected_stage = default_stage
+    ratios = []
+    for step in task.steps:
+        selected_stage = step.stage if step.stage in stage_plans else default_stage
+        plan = stage_plans[selected_stage]
+        ratio = active_mlp_ratio_from_plan(plan)
+        ratios.append(ratio)
+        trace.append(
+            {
+                "stage": step.stage,
+                "event": step.event,
+                "selected_stage": selected_stage,
+                "reason": "stage_default",
+                "active_ffn_ratio": ratio,
+            }
+        )
+    if not trace:
+        plan = stage_plans[default_stage]
+        ratio = active_mlp_ratio_from_plan(plan)
+        return plan, [], ratio
+    final_plan = stage_plans[selected_stage]
+    return final_plan, trace, sum(ratios) / len(ratios)
+
+
+def _failure_redense_plan_for_task(
+    task: AgentTrajectory,
+    stage_plans: dict[str, dict[str, Any]],
+    fallback_plan: dict[str, Any],
+    default_stage: str,
+    failure_events: list[str],
+    recovery_window_steps: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
+    router = FFNMaskRouter(
+        stage_sparsities={stage: 0.01 for stage in stage_plans},
+        default_sparsity=0.01,
+        failure_sparsity=0.0,
+        failure_events=failure_events,
+        recovery_window_steps=recovery_window_steps,
+    )
+    trace = []
+    selected_plan = stage_plans[default_stage]
+    ratios = []
+    for step in task.steps:
+        decision = router.route(step)
+        if decision.sparsity == 0.0:
+            selected_stage = "dense_fallback"
+            selected_plan = fallback_plan
+        else:
+            selected_stage = step.stage if step.stage in stage_plans else default_stage
+            selected_plan = stage_plans[selected_stage]
+        ratio = active_mlp_ratio_from_plan(selected_plan)
+        ratios.append(ratio)
+        trace.append(
+            {
+                "stage": step.stage,
+                "event": step.event,
+                "selected_stage": selected_stage,
+                "reason": decision.reason,
+                "recovery_steps_remaining": decision.recovery_steps_remaining,
+                "active_ffn_ratio": ratio,
+            }
+        )
+    if not trace:
+        ratio = active_mlp_ratio_from_plan(selected_plan)
+        return selected_plan, [], ratio
+    return selected_plan, trace, sum(ratios) / len(ratios)
+
+
+def _resolve_task_plan(
+    task: AgentTrajectory,
+    spec: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], float]:
+    if spec["mode"] == "static":
+        plan = spec["plan"]
+        ratio = 1.0 if plan is None else active_mlp_ratio_from_plan(plan)
+        return plan, [], ratio
+    if spec["mode"] == "stage_dynamic":
+        return _stage_plan_for_task(task, spec["stage_plans"], spec["default_stage"])
+    if spec["mode"] == "failure_redense_dynamic":
+        return _failure_redense_plan_for_task(
+            task,
+            spec["stage_plans"],
+            spec["fallback_plan"],
+            spec["default_stage"],
+            spec["failure_events"],
+            spec["recovery_window_steps"],
+        )
+    raise ValueError(f"Unsupported method mode: {spec['mode']}")
+
+
 def _evaluate_methods(
     tasks: list[AgentTrajectory],
     tokenizer,
     model,
-    method_plans: dict[str, dict[str, Any] | None],
+    method_specs: dict[str, dict[str, Any]],
     methods: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = []
@@ -265,22 +407,20 @@ def _evaluate_methods(
     try:
         for method in methods:
             print(f"\nMETHOD {method}", flush=True)
-            plan = method_plans[method]
-            if plan is None:
-                if mask_handle is not None:
-                    mask_handle.remove()
-                    mask_handle = None
-                active_ratio = 1.0
-            else:
-                if mask_handle is None:
-                    mask_handle = attach_qwen_switchable_mlp_masks(model, initial_plan=plan)
-                else:
-                    mask_handle.set_plan(plan)
-                active_ratio = mask_handle.active_mlp_ratio()
-
+            spec = method_specs[method]
             method_rows = []
             correct = 0
             for idx, task in enumerate(tasks, start=1):
+                plan, routing_trace, active_ratio = _resolve_task_plan(task, spec)
+                if plan is None:
+                    if mask_handle is not None:
+                        mask_handle.remove()
+                        mask_handle = None
+                elif mask_handle is None:
+                    mask_handle = attach_qwen_switchable_mlp_masks(model, initial_plan=plan)
+                else:
+                    mask_handle.set_plan(plan)
+
                 tool = task.metadata.get("tool") if task.metadata else "unknown"
                 prompt = _make_prompt(task)
                 start = time.time()
@@ -300,6 +440,7 @@ def _evaluate_methods(
                     "collapse": is_generation_collapse(prediction),
                     "latency_ms": latency_ms,
                     "active_ffn_ratio": active_ratio,
+                    "routing_trace": routing_trace,
                 }
                 method_rows.append(row)
                 rows.append(row)
@@ -373,14 +514,14 @@ def main() -> None:
 
     print(f"Loading mask bank: {mask_bank_path}", flush=True)
     mask_bank = load_stage_mask_bank(mask_bank_path)
-    method_plans = _build_method_plans(mask_bank)
-    plan_manifest = _plan_manifest({method: method_plans[method] for method in args.methods})
+    method_specs = _build_method_specs(mask_bank, config)
+    plan_manifest = _plan_manifest({method: method_specs[method] for method in args.methods})
     plans_path.write_text(json.dumps(plan_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote plan manifest to {plans_path}", flush=True)
 
     print(f"Loading model: {config.model.base_model}", flush=True)
     tokenizer, model = _load_model_and_tokenizer(config, args.local_files_only)
-    rows, metrics = _evaluate_methods(tasks, tokenizer, model, method_plans, args.methods)
+    rows, metrics = _evaluate_methods(tasks, tokenizer, model, method_specs, args.methods)
 
     with predictions_path.open("w", encoding="utf-8") as handle:
         for row in rows:
