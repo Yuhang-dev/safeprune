@@ -269,6 +269,20 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
     correct = sum(1 for row in rows if row["strict_correct"])
     collapse = sum(1 for row in rows if row["collapse"])
+    active_ratios = [float(row["active_ffn_ratio"]) for row in rows]
+    active_ffn_cost = sum(active_ratios)
+    failure_rows = [row for row in rows if row.get("failure_task", False)]
+    non_failure_rows = [row for row in rows if not row.get("failure_task", False)]
+    failure_correct = sum(1 for row in failure_rows if row["strict_correct"])
+    non_failure_correct = sum(1 for row in non_failure_rows if row["strict_correct"])
+    dense_fallback_count = sum(
+        1
+        for row in rows
+        if any(
+            trace.get("selected_stage") == "dense_fallback"
+            for trace in row.get("routing_trace", [])
+        )
+    )
     by_tool: dict[str, dict[str, int]] = {}
     for row in rows:
         tool = row["tool"]
@@ -280,12 +294,34 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total": total,
         "correct": correct,
         "accuracy": correct / total if total else 0.0,
+        "task_success_rate": correct / total if total else 0.0,
         "collapse_count": collapse,
         "collapse_rate": collapse / total if total else 0.0,
+        "generation_collapse_rate": collapse / total if total else 0.0,
         "average_latency_ms": (
             sum(float(row["latency_ms"]) for row in rows) / total if total else 0.0
         ),
-        "active_ffn_ratio": rows[0]["active_ffn_ratio"] if rows else None,
+        "active_ffn_ratio": active_ffn_cost / total if total else None,
+        "average_active_ffn_ratio": (
+            active_ffn_cost / total if total else None
+        ),
+        "active_ffn_cost": active_ffn_cost,
+        "cost_per_success": active_ffn_cost / correct if correct else None,
+        "failure_task_total": len(failure_rows),
+        "failure_task_correct": failure_correct,
+        "failure_task_success_rate": (
+            failure_correct / len(failure_rows) if failure_rows else None
+        ),
+        "non_failure_task_total": len(non_failure_rows),
+        "non_failure_task_correct": non_failure_correct,
+        "non_failure_task_success_rate": (
+            non_failure_correct / len(non_failure_rows) if non_failure_rows else None
+        ),
+        "recovery_success_rate": (
+            failure_correct / len(failure_rows) if failure_rows else None
+        ),
+        "dense_fallback_task_count": dense_fallback_count,
+        "dense_fallback_task_rate": dense_fallback_count / total if total else 0.0,
         "by_tool": {
             tool: {
                 "total": values["total"],
@@ -393,6 +429,14 @@ def _resolve_task_plan(
     raise ValueError(f"Unsupported method mode: {spec['mode']}")
 
 
+def _failure_events_for_task(task: AgentTrajectory) -> list[str]:
+    return [
+        step.event or "unknown"
+        for step in task.steps
+        if step.is_failure
+    ]
+
+
 def _evaluate_methods(
     tasks: list[AgentTrajectory],
     tokenizer,
@@ -428,6 +472,7 @@ def _evaluate_methods(
                 latency_ms = (time.time() - start) * 1000.0
                 is_correct = strict_agent_answer_correct(tool, task.expected, prediction)
                 correct += int(is_correct)
+                failure_events = _failure_events_for_task(task)
 
                 row = {
                     "method": method,
@@ -440,6 +485,8 @@ def _evaluate_methods(
                     "collapse": is_generation_collapse(prediction),
                     "latency_ms": latency_ms,
                     "active_ffn_ratio": active_ratio,
+                    "failure_task": bool(failure_events),
+                    "failure_events": failure_events,
                     "routing_trace": routing_trace,
                 }
                 method_rows.append(row)
