@@ -615,6 +615,7 @@ docs/remote_workflow.md                   # 远端运行 checklist
 docs/slicegpt_repro_commands.md           # SliceGPT 复现命令
 docs/slicegpt_2x4090_results.md           # 待新增：SliceGPT 远端结果
 docs/agent_mask_eval_results.md           # Agent mask 严格评测结果与下一步诊断
+docs/agent_handoff_next_steps.md          # 新对话交接入口
 ```
 
 ### 远端应生成
