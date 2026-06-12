@@ -99,6 +99,26 @@ python scripts/evaluate_agent_masks.py \
   --dry-run
 ```
 
+Generate real tool-execution tasks:
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1.jsonl \
+  --count 1000 \
+  --failure-count 200
+```
+
+Run the real tool-execution Agent loop:
+
+```bash
+python scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+```
+
 Run local unit tests:
 
 ```bash
@@ -111,3 +131,4 @@ python -m unittest discover -s tests
 - `docs/rtx4090_feasibility_plan.md`: two-RTX-4090 execution plan.
 - `docs/slicegpt_repro_commands.md`: external SliceGPT reproduction commands.
 - `docs/4090_smoke_results.md`: legacy SafePrune-DPO smoke results and failure notes.
+- `docs/controlled_mask_validation_v1.md`: frozen 1000-task controlled mask validation.

@@ -92,7 +92,60 @@ latency_ms
 cost_per_success
 ```
 
-## 6. SliceGPT Reproduction
+## 6. Real Tool-Execution Agent Loop
+
+Generate a 100-task smoke set:
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --count 100 \
+  --failure-count 20
+```
+
+Run the smoke set:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    dense \
+    identity_hook \
+    global_balanced_observe_approx_0.01 \
+    stage_global_balanced_approx_0.01 \
+    failure_redense_global_balanced_approx_0.01 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
+```
+
+If dense and identity_hook match, generate and run the 1000-task set:
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1.jsonl \
+  --count 1000 \
+  --failure-count 200
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+```
+
+The default method set also includes:
+
+```text
+hidden_state_centroid_global_balanced_approx_0.01
+```
+
+For the first smoke run, it is acceptable to omit the centroid method and add it
+after dense/identity/stage/failure are stable.
+
+## 7. SliceGPT Reproduction
 
 Use `docs/slicegpt_repro_commands.md`. Keep the external repository outside
 this project or under an ignored workspace directory. Do not vendor it into
