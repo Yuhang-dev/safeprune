@@ -72,11 +72,19 @@ def parse_agent_output(text: str) -> ParseResult:
                 event="schema_error",
                 error=f"final keys mismatch: missing={sorted(missing)}, extra={sorted(extra)}",
             )
-        if not isinstance(payload["answer"], str) or not payload["answer"].strip():
-            return ParseResult(ok=False, event="schema_error", error="answer must be a string")
+        answer = payload["answer"]
+        if isinstance(answer, bool) or answer is None or isinstance(answer, dict | list):
+            return ParseResult(
+                ok=False,
+                event="schema_error",
+                error="answer must be a string or number",
+            )
+        answer_text = str(answer).strip()
+        if not answer_text:
+            return ParseResult(ok=False, event="schema_error", error="answer must be non-empty")
         return ParseResult(
             ok=True,
-            action=AgentAction(type="final", answer=payload["answer"]),
+            action=AgentAction(type="final", answer=answer_text),
         )
 
     return ParseResult(ok=False, event="schema_error", error="type must be tool_call or final")

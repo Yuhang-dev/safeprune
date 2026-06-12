@@ -1,6 +1,6 @@
 # Agent FFN 动态剪枝路径说明
 
-日期：2026-06-11
+日期：2026-06-12
 
 本文结合两份输入材料整理当前项目路径：
 
@@ -31,6 +31,81 @@ Agent 的阶段标签、工具 observation、失败事件和难度信号，是�
 | Adaptive Re-Densification | 默认较高稀疏率，困难步骤或失败事件后临时恢复更多通道 | 已有 failure-triggered router scaffold，真实 generation eval 待接入 |
 
 第一版只做 FFN channel mask，不做 attention head、KV cache、安全 circuit、RL controller 或 Triton kernel。mask-based 实验只能报告 active FFN ratio 和任务指标，不能声称真实 wall-clock speedup。
+
+当前阶段已经更新为：
+
+```text
+Controlled Mask Validation v1 已冻结。
+Real Tool-Execution Agent Prune v1 smoke 正在远端执行。
+```
+
+这意味着当前不再把“补 evaluator metrics / 跑 controlled 1000 条”作为下一步；
+这些已经完成。现在主线是把同一套 stage/failure routing 接入真实工具执行闭环。
+
+## 0.1 当前做了什么、为什么、结果是什么
+
+### 做了什么
+
+已完成 controlled direct-answer 1000 条验证，并冻结到：
+
+```text
+docs/controlled_mask_validation_v1.md
+```
+
+新增 real tool-execution 代码：
+
+```text
+src/safeprune/tool_protocol.py
+src/safeprune/tool_env.py
+src/safeprune/agent_loop.py
+src/safeprune/tools/
+src/safeprune/hidden_state_router.py
+scripts/prepare_real_tool_tasks.py
+scripts/evaluate_real_tool_loop.py
+scripts/analyze_agent_pairwise_errors.py
+```
+
+### 为什么要做
+
+controlled direct-answer 任务已经证明 stage-aware routing 有信号，但它不是完整 Agent 工具闭环。
+尤其 dense calculator 只有：
+
+```text
+258/334 = 77.2%
+```
+
+这说明旧任务混入了模型心算能力。真实 Agent Prune 必须让模型生成工具调用，
+让 Python 工具真实执行，再把 observation 回填给模型。
+
+### 当前结果
+
+controlled v1 结果：
+
+| Method | Correct | Active FFN | Cost / success |
+|---|---:|---:|---:|
+| dense | 913/1000 | 1.0000 | 1.0953 |
+| global_balanced_observe_approx_0.01 | 836/1000 | 0.9900 | 1.1842 |
+| stage_global_balanced_approx_0.01 | 898/1000 | 0.9900 | 1.1025 |
+| failure_redense_global_balanced_approx_0.01 | 900/1000 | 0.9916 | 1.1018 |
+
+结论：
+
+```text
+stage-aware 比 observe-only 净多成功 62 条。
+failure-redense 在 failure subset 追平 dense。
+但 cost_per_success 仍未优于 dense，且 mask hook 不代表真实加速。
+```
+
+real tool v1 当前状态：
+
+```text
+100 条 smoke task 已在远端生成并完成一次评测。
+结果没有通过 smoke gate：dense=66/100，schema_validity_rate=0.813。
+dense 与 identity_hook 完全一致，说明 hook 路径正常。
+主要问题是协议把数字 final answer 判成 schema_error，并且 failure-redense 首轮把 start 误判为 failure。
+本地已修复 final parser、observation prompt 和 failure-redense start event。
+下一步是远端 pull 后只重跑 100 条 smoke，不要直接跑 1000。
+```
 
 ## 1. 已完成路径
 
@@ -533,7 +608,83 @@ trajectory-aware > hidden-state-only
 
 ## 4. 推荐下一步执行顺序
 
-### Step 1：本地收尾
+### 当前 Step 1：远端重跑 real tool smoke
+
+重跑前需要确认已经包含以下修复：
+
+```text
+final answer 接受 string / number。
+observation prompt 指示 ok=true 后直接 final。
+failure-redense 不把 start event 当作 failure。
+```
+
+```bash
+cd /root/autodl-tmp/safeprune/code/Prune
+source /root/autodl-tmp/safeprune/.venv_agent/bin/activate
+
+export PYTHONUNBUFFERED=1
+export PYTHONPATH=$PWD:$PWD/src
+export HF_HOME=/root/autodl-tmp/safeprune/hf_cache
+export HF_HUB_CACHE=/root/autodl-tmp/safeprune/hf_cache/hub
+export HF_DATASETS_CACHE=/root/autodl-tmp/safeprune/hf_cache/datasets
+export HF_HUB_DISABLE_XET=1
+unset TRANSFORMERS_CACHE
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    dense \
+    identity_hook \
+    global_balanced_observe_approx_0.01 \
+    stage_global_balanced_approx_0.01 \
+    failure_redense_global_balanced_approx_0.01 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
+```
+
+判断：
+
+```text
+dense 与 identity_hook 对齐。
+dense task_success_rate >= 0.90。
+dense schema_validity_rate >= 0.95。
+stage-aware 优于 observe-only。
+failure-redense 提升 failure subset。
+```
+
+### 当前 Step 2：若 smoke 稳定，跑 real tool 1000
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1.jsonl \
+  --count 1000 \
+  --failure-count 200
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+```
+
+### 当前 Step 3：加入 hidden-state centroid baseline
+
+方法名：
+
+```text
+hidden_state_centroid_global_balanced_approx_0.01
+```
+
+目的：
+
+```text
+回答显式 stage/event 轨迹信号是否优于 hidden-state-only 动态路由。
+```
+
+### 历史 Step：本地收尾
 
 ```bash
 python -m unittest discover -s tests
@@ -550,7 +701,7 @@ cd /root/autodl-tmp/safeprune/code/Prune
 git pull origin main
 source /root/autodl-tmp/safeprune/.venv_agent/bin/activate
 source /etc/network_turbo || true
-export PYTHONPATH=$PWD/src
+export PYTHONPATH=$PWD:$PWD/src
 export HF_HOME=/root/autodl-tmp/safeprune/hf_cache
 export HF_HUB_CACHE=/root/autodl-tmp/safeprune/hf_cache/hub
 export HF_DATASETS_CACHE=/root/autodl-tmp/safeprune/hf_cache/datasets
@@ -637,4 +788,4 @@ logs/*.log
 
 ## 6. 一句话结论
 
-目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的代码骨架、文档路线、远端环境、任务数据、1.5B/3B stage mask bank、严格低稀疏评测、layer sensitivity、safe-layer-only、global layer-wise 小实验、正式 evaluator 工程化，以及 stage-aware / failure re-densification 初步对照。关键结论是：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但 `stage_observe` 和 stage-specific mask 信号有效；基于 layer sensitivity 的 global layer-wise allocation 能在约 1% global budget 下把结果从 full 1% 的 86/100 提升到 95/100；stage-aware dynamic plan 进一步到 96/100，failure re-densification 以 0.9980 active FFN ratio 追平 dense 的 97/100。下一步应正式化 recovery_success_rate、cost_per_success 和失败子集指标，再决定是否扩展到更大任务集或 7B。
+目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的主线切换，并完成了 controlled mask validation v1：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但基于 layer sensitivity 的 global layer-wise allocation 能把同样约 1% active FFN budget 下的结果从 full 1% 的 86/100 提升到 95/100；进一步的 1000 条 controlled 结果显示 stage-aware routing 在同样 active FFN ratio 下比 observe-only 多成功 62 条，failure re-densification 在 failure subset 上追平 dense。这个结果已经冻结到 `docs/controlled_mask_validation_v1.md`。当前阶段已经进入 Real Tool-Execution Agent Prune v1：真实工具协议、本地 calculator/unit_convert/lookup 工具、自然闭环 runner、real tool eval 脚本和 hidden-state centroid baseline 已实现，远端已生成 100 条 smoke task，下一步是用 `PYTHONPATH=$PWD:$PWD/src` 重跑 real tool smoke，并检查 dense/identity、schema validity、task success、stage-aware vs observe-only、failure-redense recovery。

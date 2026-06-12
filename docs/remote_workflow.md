@@ -97,6 +97,8 @@ cost_per_success
 Generate a 100-task smoke set:
 
 ```bash
+export PYTHONPATH=$PWD:$PWD/src
+
 python scripts/prepare_real_tool_tasks.py \
   --output data/agent/real_tool_tasks_v1_smoke_100.jsonl \
   --count 100 \

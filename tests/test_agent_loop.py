@@ -55,6 +55,23 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(row["tool_call_count"], 1)
         self.assertEqual(row["successful_tool_call_count"], 1)
 
+    def test_numeric_final_answer_succeeds(self):
+        row = run_real_tool_episode(
+            task=_task(),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=_SequenceGenerator(
+                [
+                    '{"type":"tool_call","name":"calculator","arguments":{"expression":"2 + 3"}}',
+                    '{"type":"final","answer":5}',
+                ]
+            ),
+        )
+
+        self.assertTrue(row["success"])
+        self.assertEqual(row["final_answer"], "5")
+        self.assertEqual(row["schema_error_count"], 0)
+
     def test_schema_error_then_retry(self):
         row = run_real_tool_episode(
             task=_task(),

@@ -951,3 +951,110 @@ failure_redense_global_balanced_approx_0.01 以 0.9980 active FFN ratio 达到 9
 因此下一阶段应正式化 recovery_success_rate、cost_per_success 和失败子集指标，
 再决定是否扩展到更大任务集或 7B。
 ```
+
+## 9. 2026-06-12 更新：Controlled v1 已冻结，进入 Real Tool v1
+
+### 9.1 做了什么
+
+1000 条 controlled direct-answer 结果已冻结到：
+
+```text
+docs/controlled_mask_validation_v1.md
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_1000.jsonl
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_1000_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_1000_plans.json
+```
+
+新增真实工具执行闭环：
+
+```text
+strict JSON tool protocol
+local calculator / unit_convert / lookup execution
+deterministic fault_schedule
+natural loop Agent runner
+real tool smoke / 1000 eval script
+hidden-state centroid baseline
+```
+
+对应代码：
+
+```text
+src/safeprune/tool_protocol.py
+src/safeprune/tool_env.py
+src/safeprune/agent_loop.py
+src/safeprune/tools/
+src/safeprune/hidden_state_router.py
+scripts/prepare_real_tool_tasks.py
+scripts/evaluate_real_tool_loop.py
+```
+
+### 9.2 为什么要做
+
+controlled direct-answer 任务已经足够证明 mask/routing 机制信号，但不是完整 Agent 工具使用。
+旧流程是：
+
+```text
+prompt -> model final answer -> exact match
+```
+
+真实 Agent Prune 应该是：
+
+```text
+prompt -> JSON tool_call -> Python tool execution -> observation -> final answer
+```
+
+原因是 dense 在 controlled calculator 上只有：
+
+```text
+258/334 = 77.2%
+```
+
+这说明直接回答任务混入了模型心算能力。真实工具闭环可以把评测重点转到：
+
+```text
+工具选择
+JSON/schema validity
+参数正确性
+observation 使用
+失败恢复
+每个成功任务的 active FFN cost
+```
+
+### 9.3 当前结果与状态
+
+Controlled v1 1000 条结果：
+
+| Method | Correct | Active FFN | Cost / success |
+|---|---:|---:|---:|
+| dense | 913/1000 | 1.0000 | 1.0953 |
+| identity_hook | 913/1000 | 1.0000 | 1.0953 |
+| global_balanced_observe_approx_0.01 | 836/1000 | 0.9900 | 1.1842 |
+| stage_global_balanced_approx_0.01 | 898/1000 | 0.9900 | 1.1025 |
+| failure_redense_global_balanced_approx_0.01 | 900/1000 | 0.9916 | 1.1018 |
+
+结论：
+
+```text
+stage-aware routing 在同样 active FFN ratio 下明显优于 observe-only。
+failure-redense 恢复 failure subset，但整体 cost_per_success 未超过 dense。
+```
+
+Real Tool v1 当前状态：
+
+```text
+本地实现已完成。
+100 条 smoke task 已在远端生成并跑完一次。
+第一次有效 smoke 未通过 gate：
+  dense / identity_hook = 66/100
+  dense schema_validity_rate = 0.813
+  stage-aware = 47/100
+  observe-only = 33/100
+  failure-redense = 66/100，但 dense_fallback_rate=1.0
+原因主要是协议和 runner 实现问题，而不是正式 pruning 结论：
+  数字 final answer 被旧 parser 判成 schema_error；
+  failure-redense 首轮 start event 被误判成 failure。
+本地已修复 final parser、observation prompt、failure-redense start event。
+下一步是远端 pull 后重跑 100 条 smoke。
+```
+
+当前不要继续扩展工具集、stateful DB、7B 或 RL router。先让 real tool smoke 的 dense/identity、schema validity 和 stage/failure 对照稳定。

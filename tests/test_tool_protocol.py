@@ -18,6 +18,17 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertEqual(parsed.action.type, "final")
         self.assertEqual(parsed.action.answer, "5")
 
+    def test_parse_numeric_final_as_string_answer(self):
+        parsed = parse_agent_output('{"type":"final","answer":5}')
+        self.assertTrue(parsed.ok)
+        self.assertEqual(parsed.action.type, "final")
+        self.assertEqual(parsed.action.answer, "5")
+
+    def test_reject_non_scalar_final_answer(self):
+        parsed = parse_agent_output('{"type":"final","answer":{"value":5}}')
+        self.assertFalse(parsed.ok)
+        self.assertEqual(parsed.event, "schema_error")
+
     def test_reject_invalid_json(self):
         parsed = parse_agent_output("not json")
         self.assertFalse(parsed.ok)

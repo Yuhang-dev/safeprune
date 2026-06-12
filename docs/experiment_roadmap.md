@@ -25,8 +25,10 @@ cost per successful task = total active FFN cost / successful tasks
 | Stage mask bank | `[DONE]` | 新增 FFN-only stage mask bank 数据结构与 dry-run 构建脚本。 |
 | Rule router | `[DONE]` | 新增 stage default + failure-triggered re-densification 路由器。 |
 | Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
-| SliceGPT 复现 | `[TODO]` | 外部仓库复现，不 vendoring 到本项目。 |
-| 真实 Agent generation eval | `[TODO]` | 远端接 Qwen 生成、工具执行和自动判分。 |
+| Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
+| Real Tool-Execution Agent Prune v1 | `[ACTIVE]` | 已新增本地工具协议、工具执行器、自然闭环 runner 和远端 smoke/1000 命令。 |
+| Hidden-state centroid router | `[NEXT]` | real tool smoke 稳定后加入 `hidden_state_centroid_global_balanced_approx_0.01`。 |
+| SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
 ## 1. 为什么转向 Agent 动态 FFN
@@ -42,9 +44,10 @@ cost per successful task = total active FFN cost / successful tasks
 
 因此当前主线不再直接推进 25%/35%/50% mixed structured pruning。第一版只研究 FFN channel mask，并把 attention head、KV cache、安全路径和 Triton kernel 放到后续扩展。
 
-## 2. 最小复现目标：SliceGPT
+## 2. 外部结构压缩基线：SliceGPT
 
-第一阶段复现 SliceGPT，目的不是替代本项目方法，而是建立 2x4090 上的压缩与效率测量基线。
+SliceGPT 仍是外部结构压缩与效率测量基线，但不再阻塞当前主线。
+当前主线已经进入 Real Tool-Execution Agent Prune v1。
 
 模型矩阵：
 
@@ -105,7 +108,14 @@ Failure-triggered re-densification
 
 ## 4. 实验顺序
 
-1. `[LOCAL]` 跑单元测试和 dry-run：
+1. `[DONE]` 冻结 controlled mask validation v1：
+
+```text
+docs/controlled_mask_validation_v1.md
+outputs/agent_qwen2_5_3b_4090_low/eval/stage_failure_official_1000*.json
+```
+
+2. `[LOCAL]` 跑单元测试和 dry-run：
 
 ```bash
 python -m unittest discover -s tests
@@ -113,17 +123,36 @@ python scripts/build_stage_mask_bank.py --config configs/agent_qwen2_5_1_5b_4090
 python scripts/evaluate_agent_masks.py --config configs/agent_qwen2_5_1_5b_4090.yaml --dry-run
 ```
 
-2. `[REMOTE]` 复现 SliceGPT 小模型矩阵。
-3. `[REMOTE]` 生成受控 Agent 任务：
+3. `[REMOTE]` 生成真实工具执行 smoke 任务：
 
 ```bash
-python scripts/prepare_agent_tasks.py --count 1000
+export PYTHONPATH=$PWD:$PWD/src
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --count 100 \
+  --failure-count 20
 ```
 
-4. `[REMOTE]` 用 Qwen2.5-1.5B 生成 stage mask bank。
-5. `[REMOTE]` 比较 dense、static mask、stage mask、failure re-densification。
-6. `[REMOTE]` 扩到 Qwen2.5-3B。
-7. `[REMOTE]` 跑 Probe Pruning 作为 hidden-state-only 动态剪枝对照。
+4. `[REMOTE]` 跑 Qwen2.5-3B real tool smoke：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    dense \
+    identity_hook \
+    global_balanced_observe_approx_0.01 \
+    stage_global_balanced_approx_0.01 \
+    failure_redense_global_balanced_approx_0.01 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
+```
+
+5. `[REMOTE]` 若 dense 与 identity_hook 对齐，跑 1000 条 real tool v1。
+6. `[REMOTE]` smoke 稳定后加入 hidden-state centroid router 对照。
+7. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 

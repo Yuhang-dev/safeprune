@@ -262,7 +262,14 @@ def _parse_error_observation(parsed: ParseResult) -> dict[str, Any]:
 
 
 def _observation_prompt(observation: dict[str, Any]) -> str:
-    return "Tool observation:\n" + tool_observation_message(observation)
+    return (
+        "Tool observation:\n"
+        + tool_observation_message(observation)
+        + "\n\nNext action rules:\n"
+        + "- If ok is true, answer with exactly one final JSON object using the observed result.\n"
+        + "- If ok is false and retryable is true, call the needed tool again with valid arguments.\n"
+        + "- Output no text outside the JSON object."
+    )
 
 
 def _episode_payload(

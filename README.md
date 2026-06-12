@@ -18,11 +18,17 @@ and memory.
 
 The default project route is:
 
-1. Reproduce SliceGPT as the local/remote structured compression baseline.
-2. Build FFN-only static and stage-specific mask banks for Qwen2.5 models.
-3. Add rule-based failure-triggered re-densification.
-4. Compare dense, static masks, stage masks, and trajectory-aware recovery.
-5. Use Probe Pruning as the closest hidden-state-only dynamic pruning baseline.
+1. Treat `docs/controlled_mask_validation_v1.md` as the frozen controlled-mask
+   MVP result.
+2. Run Real Tool-Execution Agent Prune v1 on Qwen2.5-3B with local executable
+   calculator, unit conversion, and lookup tools.
+3. Compare dense, identity hook, observe-only global mask, stage-aware routing,
+   and failure-triggered re-densification in the real tool loop.
+4. Add `hidden_state_centroid_global_balanced_approx_0.01` as the first
+   hidden-state-only dynamic routing baseline after the real tool smoke is
+   stable.
+5. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
+   current Agent Prune v1 loop.
 
 The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The
 4090 smoke results remain useful as a negative signal: attention-head pruning was
@@ -102,6 +108,8 @@ python scripts/evaluate_agent_masks.py \
 Generate real tool-execution tasks:
 
 ```bash
+export PYTHONPATH=$PWD:$PWD/src
+
 python scripts/prepare_real_tool_tasks.py \
   --output data/agent/real_tool_tasks_v1.jsonl \
   --count 1000 \

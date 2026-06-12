@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from safeprune.agent_loop import RouteOutcome, run_real_tool_episode, summarize_real_tool_rows
 from safeprune.config import load_config
@@ -218,7 +223,8 @@ class _MethodRuntime:
                 failure_events=self.spec["failure_events"],
                 recovery_window_steps=self.spec["recovery_window_steps"],
             )
-        decision = self.failure_router.route(AgentStep(stage=stage, text="", event=event))
+        router_event = None if event == "start" else event
+        decision = self.failure_router.route(AgentStep(stage=stage, text="", event=router_event))
         if decision.sparsity == 0.0:
             selected_stage = "dense_fallback"
             plan = self.spec["fallback_plan"]
