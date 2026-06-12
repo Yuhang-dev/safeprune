@@ -94,6 +94,27 @@ cost_per_success
 
 ## 6. Real Tool-Execution Agent Loop
 
+Real Tool-Execution Agent Prune v1 已完成并冻结，不需要继续补同配置
+`real_tool_v1_bypass_1000`。
+
+冻结输出：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000*
+docs/real_tool_v1_results.md
+```
+
+本地分析命令：
+
+```bash
+python scripts/analyze_real_tool_v1_results.py
+```
+
+下一轮远端优先跑 hidden-state centroid baseline 或 3% / 5% / 10% global FFN
+budget ladder。
+
+### Historical v1 commands
+
 Generate a 100-task smoke set:
 
 ```bash
@@ -122,7 +143,7 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
 ```
 
-If dense and identity_hook match, generate and run the 1000-task set:
+Historical 1000-task command:
 
 ```bash
 python scripts/prepare_real_tool_tasks.py \
@@ -135,10 +156,10 @@ python -u scripts/evaluate_real_tool_loop.py \
   --tasks data/agent/real_tool_tasks_v1.jsonl \
   --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
   --local-files-only \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000
 ```
 
-The default method set also includes:
+The hidden-state centroid method is not part of the frozen v1 default table yet:
 
 ```text
 hidden_state_centroid_global_balanced_approx_0.01

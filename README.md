@@ -1,13 +1,13 @@
 # Agent FFN Pruning
 
-This repository studies trajectory-aware dynamic FFN pruning for reasoning and
-tool-using language agents.
+This repository studies trajectory-event-aware FFN compute allocation for
+reasoning and tool-using language agents.
 
 The current research question is:
 
 ```text
-Can Agent stage labels, observations, failure events, and difficulty signals
-allocate FFN compute better than fixed masks or hidden-state-only routing?
+Can Agent failure events, recovery stages, observations, and hidden states
+identify where FFN compute should be preserved or temporarily restored?
 ```
 
 The primary metric is not raw sparsity. It is cost per successful task, measured
@@ -20,14 +20,17 @@ The default project route is:
 
 1. Treat `docs/controlled_mask_validation_v1.md` as the frozen controlled-mask
    MVP result.
-2. Run Real Tool-Execution Agent Prune v1 on Qwen2.5-3B with local executable
-   calculator, unit conversion, and lookup tools.
-3. Compare dense, identity hook, observe-only global mask, stage-aware routing,
-   and failure-triggered re-densification in the real tool loop.
+2. Treat `docs/real_tool_v1_results.md` as the frozen real tool-execution v1
+   result.
+3. Use Real Tool v1's central finding as the current paper story: failure
+   recovery is a localized reflect-step compute bottleneck, and trajectory
+   events can trigger targeted re-densification.
 4. Add `hidden_state_centroid_global_balanced_approx_0.01` as the first
    hidden-state-only dynamic routing baseline after the real tool smoke is
    stable.
-5. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
+5. Start a bottom-up pruning budget ladder, targeting 3%, 5%, and 10% global FFN
+   budgets with layer-wise allocation and compensation.
+6. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
    current Agent Prune v1 loop.
 
 The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The
@@ -124,7 +127,13 @@ python scripts/evaluate_real_tool_loop.py \
   --tasks data/agent/real_tool_tasks_v1.jsonl \
   --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
   --local-files-only \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000
+```
+
+Analyze the frozen Real Tool v1 result:
+
+```bash
+python scripts/analyze_real_tool_v1_results.py
 ```
 
 Run local unit tests:
@@ -140,3 +149,4 @@ python -m unittest discover -s tests
 - `docs/slicegpt_repro_commands.md`: external SliceGPT reproduction commands.
 - `docs/4090_smoke_results.md`: legacy SafePrune-DPO smoke results and failure notes.
 - `docs/controlled_mask_validation_v1.md`: frozen 1000-task controlled mask validation.
+- `docs/real_tool_v1_results.md`: frozen 1000-task real tool-execution result.

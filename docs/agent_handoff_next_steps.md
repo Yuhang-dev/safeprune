@@ -1,28 +1,74 @@
 # Agent FFN Pruning Handoff
 
-日期：2026-06-12
+日期：2026-06-13
 
 本文是当前新对话交接入口。优先读本文，再按需读：
 
 ```text
+docs/real_tool_v1_results.md
 docs/controlled_mask_validation_v1.md
 docs/agent_mask_eval_results.md
 docs/agent_ffn_progress_paths.md
 docs/remote_workflow.md
 ```
 
-## 1. 当前阶段
+## 0. 最新状态
 
-当前主线仍是：
+当前已经完成并冻结：
 
 ```text
-Trajectory-Aware Dynamic FFN Pruning for Tool-Using Reasoning Agents
+Controlled Mask Validation v1
+Real Tool-Execution Agent Prune v1
 ```
 
-但阶段已经从 controlled direct-answer mask validation 转到：
+Real Tool v1 的正式结果在：
 
 ```text
-Real Tool-Execution Agent Prune v1 smoke
+docs/real_tool_v1_results.md
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000*
+```
+
+主结论已经从“stage-aware mask switching 全面优于 observe-only”收紧为：
+
+```text
+Agent failure recovery 是局部计算瓶颈。
+failure / reflect 轨迹信号可以定位高价值计算步骤。
+只在 reflect recovery step 恢复 dense，可接近窗口式 redense 的鲁棒性，
+并将 dense fallback step ratio 从 0.1829 降到 0.0926。
+```
+
+主表关键结果：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| observe-only | 951/1000 | 151/200 | 800/800 | 2.4349 | 0.0000 |
+| stage-aware | 933/1000 | 133/200 | 800/800 | 2.6878 | 0.0000 |
+| failure-redense | 996/1000 | 196/200 | 800/800 | 2.1938 | 0.1829 |
+| observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 0.1818 |
+| stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 0.0926 |
+
+下一步不要继续补同配置 1000。优先级是：
+
+```text
+1. 跑 hidden_state_centroid_global_balanced_approx_0.01 作为审稿 baseline。
+2. 做 3% / 5% / 10% global FFN budget ladder。
+3. 研究 FLAP-style scoring、layer-wise budget、bias/scale compensation。
+```
+
+## 1. 当前阶段
+
+当前主线已经收紧为：
+
+```text
+Trajectory-Event-Aware FFN Compute Allocation for Tool-Using Reasoning Agents
+```
+
+阶段已经从 real tool smoke 转到：
+
+```text
+Real Tool v1 frozen -> hidden-state baseline / budget ladder
 ```
 
 也就是从：
@@ -38,12 +84,11 @@ Real Tool-Execution Agent Prune v1 smoke
 -> observation 回填 -> 模型 final answer -> 自动判分
 ```
 
-当前工作不是继续扫 sparsity，也不是上 7B，而是验证真实工具闭环下：
+当前工作不是继续补同配置 1000，也不是上 7B，而是验证：
 
 ```text
-stage-aware dynamic FFN routing 是否仍优于 observe-only mask
-failure-triggered re-densification 是否改善 failure subset
-hidden-state-only centroid router 是否弱于/接近 stage-aware 轨迹信号
+hidden-state-only centroid router 是否能替代显式 failure / reflect 轨迹信号
+更高 global FFN budget 是否能在 Real Tool v1 稳定路由下成立
 ```
 
 ## 2. 为什么要这样做
@@ -353,8 +398,8 @@ failure_redense_global_balanced_approx_0.01 是否提升 failure_task_success_ra
 
 ```text
 读取 docs/agent_handoff_next_steps.md，
-然后继续 Real Tool-Execution Agent Prune v1 smoke：
-远端先 export PYTHONPATH=$PWD:$PWD/src，
-重跑 scripts/evaluate_real_tool_loop.py 的 100 条 smoke，
-检查 dense/identity、schema_validity_rate、task_success_rate 和 stage/failure 对照。
+然后从 docs/real_tool_v1_results.md 继续：
+不要补同配置 1000；
+优先跑 hidden_state_centroid_global_balanced_approx_0.01 对照，
+再规划 3% / 5% / 10% global FFN budget ladder。
 ```

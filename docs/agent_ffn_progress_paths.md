@@ -1,6 +1,6 @@
 # Agent FFN 动态剪枝路径说明
 
-日期：2026-06-12
+日期：2026-06-13
 
 本文结合两份输入材料整理当前项目路径：
 
@@ -36,11 +36,16 @@ Agent 的阶段标签、工具 observation、失败事件和难度信号，是�
 
 ```text
 Controlled Mask Validation v1 已冻结。
-Real Tool-Execution Agent Prune v1 smoke 正在远端执行。
+Real Tool-Execution Agent Prune v1 已冻结。
 ```
 
 这意味着当前不再把“补 evaluator metrics / 跑 controlled 1000 条”作为下一步；
-这些已经完成。现在主线是把同一套 stage/failure routing 接入真实工具执行闭环。
+这些已经完成。现在也不再补同配置 real-tool 1000。主线已经转为：
+
+```text
+hidden-state-only baseline
+3% / 5% / 10% global FFN budget ladder
+```
 
 ## 0.1 当前做了什么、为什么、结果是什么
 
@@ -99,12 +104,20 @@ failure-redense 在 failure subset 追平 dense。
 real tool v1 当前状态：
 
 ```text
-100 条 smoke task 已在远端生成并完成一次评测。
-结果没有通过 smoke gate：dense=66/100，schema_validity_rate=0.813。
-dense 与 identity_hook 完全一致，说明 hook 路径正常。
-主要问题是协议把数字 final answer 判成 schema_error，并且 failure-redense 首轮把 start 误判为 failure。
-本地已修复 final parser、observation prompt 和 failure-redense start event。
-下一步是远端 pull 后只重跑 100 条 smoke，不要直接跑 1000。
+1000 条真实工具闭环结果已完成并冻结到 docs/real_tool_v1_results.md。
+dense 与 identity_hook 完全一致：997/1000。
+所有方法 non-failure 都是 800/800，差异集中在 failure recovery。
+observe-failure-redense 达到 997/1000，是当前最佳工程策略。
+stage-reflect-dense 达到 996/1000，failure subset 196/200，
+并将 fallback step ratio 从窗口式 redense 的 0.1829 降到 0.0926。
+```
+
+论文故事也随之收紧：
+
+```text
+不是 stage-aware mask switching 全面优于 observe-only；
+而是 failure / reflect 轨迹信号可以定位 recovery 计算瓶颈，
+只在 reflect step 恢复 dense 即可接近固定窗口 redense 的鲁棒性，并减少 dense fallback steps。
 ```
 
 ## 1. 已完成路径
@@ -608,7 +621,21 @@ trajectory-aware > hidden-state-only
 
 ## 4. 推荐下一步执行顺序
 
-### 当前 Step 1：远端重跑 real tool smoke
+### 当前 Step 1：hidden-state centroid baseline
+
+Real Tool v1 已冻结。下一步不再补同配置 1000，而是加入：
+
+```text
+hidden_state_centroid_global_balanced_approx_0.01
+```
+
+目的：
+
+```text
+回答 hidden-state-only routing 是否能替代显式 failure / reflect 轨迹信号。
+```
+
+### 历史 Step：real tool smoke
 
 重跑前需要确认已经包含以下修复：
 

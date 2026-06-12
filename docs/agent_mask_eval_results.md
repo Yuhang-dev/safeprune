@@ -1039,7 +1039,7 @@ stage-aware routing 在同样 active FFN ratio 下明显优于 observe-only。
 failure-redense 恢复 failure subset，但整体 cost_per_success 未超过 dense。
 ```
 
-Real Tool v1 当前状态：
+Real Tool v1 历史 smoke 诊断：
 
 ```text
 本地实现已完成。
@@ -1058,3 +1058,61 @@ Real Tool v1 当前状态：
 ```
 
 当前不要继续扩展工具集、stateful DB、7B 或 RL router。先让 real tool smoke 的 dense/identity、schema validity 和 stage/failure 对照稳定。
+
+## 10. 2026-06-13 更新：Real Tool v1 已冻结
+
+真实工具闭环 1000 条结果已冻结到：
+
+```text
+docs/real_tool_v1_results.md
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000.jsonl
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000_metrics.json
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000_pairwise.json
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000_failures.jsonl
+```
+
+主表：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| observe-only | 951/1000 | 151/200 | 800/800 | 2.4349 | 0.0000 |
+| stage-aware | 933/1000 | 133/200 | 800/800 | 2.6878 | 0.0000 |
+| failure-redense | 996/1000 | 196/200 | 800/800 | 2.1938 | 0.1829 |
+| observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 0.1818 |
+| stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 0.0926 |
+| stage-reflect-observe | 946/1000 | 146/200 | 800/800 | 2.4551 | 0.0000 |
+
+结论：
+
+```text
+Real Tool v1 不支持 “stage-aware mask switching 全面优于 observe-only”。
+stage-aware 在 non-failure 上稳定，但 failure recovery 弱于 observe-only。
+
+真正成立的机制结论是：
+failure recovery 是 reflect-step 局部计算瓶颈；
+只在 reflect recovery step 做 dense fallback，
+可以把 failure subset 恢复到 196/200，
+同时把 fallback step ratio 从窗口式 redense 的 0.1829 降到 0.0926。
+```
+
+论文叙事应从：
+
+```text
+Stage-Aware Dynamic FFN Pruning
+```
+
+收紧为：
+
+```text
+Trajectory-Event-Aware FFN Compute Allocation
+```
+
+下一步：
+
+```text
+1. 跑 hidden-state centroid baseline。
+2. 做 3% / 5% / 10% global FFN budget ladder。
+3. 研究 FLAP-style scoring、layer-wise budget、bias/scale compensation。
+```

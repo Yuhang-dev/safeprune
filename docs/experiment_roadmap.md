@@ -3,12 +3,12 @@
 本文档是 `D:\Prune` 当前主线。项目已从 SafePrune-DPO 对齐恢复转向：
 
 ```text
-Trajectory-Aware Dynamic FFN Pruning for Tool-Using Reasoning Agents
+Trajectory-Event-Aware FFN Compute Allocation for Tool-Using Reasoning Agents
 ```
 
 核心问题：
 
-> Agent 阶段、工具 observation、失败事件和难度信号，是否能比固定 mask 或 hidden-state-only 路由更有效地分配 FFN 计算？
+> Agent failure / reflect 事件、工具 observation、阶段和 hidden state，是否能定位高价值 FFN 计算步骤，并比固定 mask 或 hidden-state-only 路由更有效地分配恢复计算？
 
 主指标：
 
@@ -26,8 +26,9 @@ cost per successful task = total active FFN cost / successful tasks
 | Rule router | `[DONE]` | 新增 stage default + failure-triggered re-densification 路由器。 |
 | Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
 | Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
-| Real Tool-Execution Agent Prune v1 | `[ACTIVE]` | 已新增本地工具协议、工具执行器、自然闭环 runner 和远端 smoke/1000 命令。 |
-| Hidden-state centroid router | `[NEXT]` | real tool smoke 稳定后加入 `hidden_state_centroid_global_balanced_approx_0.01`。 |
+| Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
+| Hidden-state centroid router | `[NEXT]` | 加入 `hidden_state_centroid_global_balanced_approx_0.01`，作为 hidden-state-only 审稿基线。 |
+| Budget ladder | `[NEXT]` | 基于 Real Tool v1 的稳定路由，推进 3% / 5% / 10% global FFN budget。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -78,33 +79,33 @@ tokens/s
 
 ## 3. 本项目 MVP
 
-方法：
+Real Tool v1 后，论文故事从单纯 stage switching 收紧为：
 
 ```text
-Stage-specific FFN mask bank
+Trajectory-event-aware compute allocation
 plus
-Failure-triggered re-densification
+Reflect-localized re-densification
 ```
 
 输入信号：
 
 | 信号 | 第一版用法 |
 |---|---|
-| `stage` | `plan/reflect` 使用低稀疏，`observe/answer` 使用高稀疏。 |
-| `event` | `tool_error/schema_error/timeout` 触发临时 re-densification。 |
+| `stage` | 标记 `plan/reflect/answer` 等步骤，但 Real Tool v1 不支持“stage-aware 全面优于 observe-only”的强结论。 |
+| `event` | `tool_error/schema_error/timeout/premature_final` 定位 recovery bottleneck。 |
 | `observation` | 第一版只通过 step text 和 event 进入统计，后续再建模。 |
-| `difficulty` | 第一版暂不训练 router，后续加入 entropy/margin/verifier。 |
+| `reflect` | Real Tool v1 显示只在 reflect recovery step 做 dense fallback 即可接近固定窗口 redense。 |
+| `hidden state` | 下一步加入 centroid router，检验外部轨迹信号是否超过 hidden-state-only。 |
 
-默认策略：
+Real Tool v1 冻结策略：
 
-| Stage | Sparsity |
-|---|---:|
-| plan | 10% |
-| act | 20% |
-| observe | 30% |
-| reflect | 10% |
-| answer | 30% |
-| failure window | 10% |
+| Method | 用途 | 结论 |
+|---|---|---|
+| `observe_failure_redense_global_balanced_approx_0.01` | 最佳工程策略 | 997/1000，cost per success 低于 dense。 |
+| `stage_reflect_dense_global_balanced_approx_0.01` | 机制消融 | 只在 reflect step dense，fallback step ratio 比窗口式 redense 低约 49%。 |
+| `stage_global_balanced_approx_0.01` | stage-aware baseline | non-failure 稳定，但 failure recovery 弱于 observe-only。 |
+
+当前底层 mask 仍是约 1% global FFN budget。后续 3% / 5% / 10% 需要先升级 layer-wise budget 和 compensation，不直接恢复旧的 10%/20%/30% per-layer stage sparsity。
 
 ## 4. 实验顺序
 
@@ -150,9 +151,16 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
 ```
 
-5. `[REMOTE]` 若 dense 与 identity_hook 对齐，跑 1000 条 real tool v1。
-6. `[REMOTE]` smoke 稳定后加入 hidden-state centroid router 对照。
-7. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+5. `[DONE]` 跑 1000 条 real tool v1 bypass evaluation：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000*
+docs/real_tool_v1_results.md
+```
+
+6. `[NEXT]` 加入 hidden-state centroid router 对照。
+7. `[NEXT]` 做 3% / 5% / 10% global FFN budget ladder。
+8. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 
@@ -160,17 +168,18 @@ python -u scripts/evaluate_real_tool_loop.py \
 |---|---|
 | Dense | 任务成功率上限。 |
 | Static Global Mask | 固定 FFN mask 基线。 |
-| Stage Mask | 检查阶段语义是否有价值。 |
+| Stage Mask | 检查阶段语义是否有价值；Real Tool v1 中它不是最强方法。 |
 | Failure Re-densification | 检查失败后恢复计算是否降低重试成本。 |
+| Reflect-localized Dense | 检查 recovery 计算是否集中在 reflect step。 |
 | Hidden-State-Only Router | 对齐 Probe Pruning 式动态信号。 |
 
 ## 6. 论文边界
 
 当前贡献只能写成：
 
-1. 提出 Agent 轨迹感知 FFN 动态稀疏问题。
+1. 提出 Agent 轨迹事件感知 FFN 计算分配问题。
 2. 建立阶段敏感度画像和 stage mask bank。
-3. 验证失败触发 re-densification 是否改善 recovery rate。
+3. 验证失败触发与 reflect-localized re-densification 是否改善 recovery rate。
 4. 用 cost per successful task 评价压缩后 Agent，而不是只看 PPL 或平均 sparsity。
 
 第一版不声称：
