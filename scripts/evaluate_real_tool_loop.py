@@ -281,6 +281,7 @@ class _MethodRuntime:
                 "fallback_remaining_before": fallback_remaining_before,
                 "fallback_remaining_after": decision.recovery_steps_remaining,
                 "recovery_steps_remaining": decision.recovery_steps_remaining,
+                **_plan_diagnostics(plan),
             },
         )
 
@@ -318,6 +319,7 @@ class _MethodRuntime:
                         "fallback_remaining_before": fallback_remaining_before,
                         "fallback_remaining_after": fallback_remaining_after,
                         "recovery_steps_remaining": decision.recovery_steps_remaining,
+                        **_plan_diagnostics(plan),
                     },
                 )
 
@@ -334,6 +336,7 @@ class _MethodRuntime:
                 "policy": policy.__dict__,
                 "fallback_remaining_before": fallback_remaining_before,
                 "fallback_remaining_after": fallback_remaining_after,
+                **_plan_diagnostics(plan),
             },
         )
 
@@ -345,12 +348,13 @@ class _MethodRuntime:
         if mode == "dense":
             return "dense_fallback", "reflect_dense", self.spec["fallback_plan"]
         if mode == "observe":
-            return "observe", "observe", self.spec["observe_plan"]
+            return "observe", self.spec.get("observe_plan_name", "observe"), self.spec["observe_plan"]
         if mode == "stage":
             selected_stage = (
                 stage if stage in self.spec["stage_plans"] else self.spec["default_stage"]
             )
-            return selected_stage, selected_stage, self.spec["stage_plans"][selected_stage]
+            plan_name = self.spec.get("stage_plan_names", {}).get(selected_stage, selected_stage)
+            return selected_stage, plan_name, self.spec["stage_plans"][selected_stage]
         raise ValueError(f"Unsupported routing policy mode: {mode}")
 
     def _route_hidden_centroid(
@@ -413,6 +417,7 @@ class _MethodRuntime:
                 "router_prefill_cost": float(self.spec.get("router_prefill_cost", 1.0)),
                 "fallback_remaining_before": 0,
                 "fallback_remaining_after": 0,
+                **_plan_diagnostics(plan),
             },
         )
 
@@ -510,6 +515,108 @@ def _extend_method_specs(
     return specs
 
 
+def _load_plan(path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _infer_substrate_name(plan_path: str | Path) -> str:
+    path = Path(plan_path)
+    parent = path.parent.name
+    stem = path.stem
+    if stem.startswith("budget_plan_"):
+        stem = stem[len("budget_plan_") :]
+    raw = f"{parent}_{stem}" if parent else stem
+    return "".join(char if char.isalnum() else "_" for char in raw).strip("_")
+
+
+def _register_substrate_specs(
+    specs: dict[str, dict[str, Any]],
+    *,
+    substrate_plans: list[tuple[str, dict[str, Any], str]],
+    identity_plan: dict[str, Any],
+    config,
+) -> None:
+    stages = list(config.agent.stages)
+    for name, sparse_plan, plan_path in substrate_plans:
+        stage_plans = {stage: sparse_plan for stage in stages}
+        stage_plan_names = {stage: name for stage in stages}
+        common = {
+            "stage_plans": stage_plans,
+            "stage_plan_names": stage_plan_names,
+            "observe_plan": sparse_plan,
+            "observe_plan_name": name,
+            "fallback_plan": identity_plan,
+            "default_stage": "answer",
+            "failure_events": list(config.agent.failure_events),
+            "recovery_window_steps": config.agent.recovery_window_steps,
+            "substrate_plan_name": name,
+            "substrate_plan_path": plan_path,
+        }
+        specs[f"substrate_{name}_stage_reflect_dense"] = {
+            "mode": "routing_policy",
+            "policy": RoutingPolicy("stage", "dense", "normal"),
+            **common,
+        }
+        specs[f"substrate_{name}_observe_failure_redense"] = {
+            "mode": "routing_policy",
+            "policy": RoutingPolicy("observe", "observe", "dense"),
+            **common,
+        }
+
+
+def _load_substrate_plans(
+    plan_paths: list[str],
+    plan_names: list[str],
+) -> list[tuple[str, dict[str, Any], str]]:
+    if plan_names and len(plan_names) != len(plan_paths):
+        raise ValueError("--substrate-name must be provided once per --substrate-plan.")
+    loaded = []
+    used_names = set()
+    for idx, plan_path in enumerate(plan_paths):
+        name = plan_names[idx] if plan_names else _infer_substrate_name(plan_path)
+        name = "".join(char if char.isalnum() else "_" for char in name).strip("_")
+        if not name:
+            raise ValueError("Substrate plan name must not be empty.")
+        if name in used_names:
+            raise ValueError(f"Duplicate substrate plan name: {name}")
+        plan = _load_plan(plan_path)
+        if not isinstance(plan.get("layers"), list) or not plan["layers"]:
+            raise ValueError(f"Substrate plan has no layers: {plan_path}")
+        loaded.append((name, plan, str(plan_path)))
+        used_names.add(name)
+    return loaded
+
+
+def _plan_diagnostics(plan: dict[str, Any] | None) -> dict[str, Any]:
+    if plan is None:
+        return {
+            "bias_compensation_enabled": False,
+            "layer_scale_enabled": False,
+            "substrate_method": None,
+            "substrate_global_target": None,
+            "substrate_actual_sparsity": None,
+        }
+    layers = plan.get("layers", [])
+    budget_plan = plan.get("budget_plan") or {}
+    return {
+        "bias_compensation_enabled": any(
+            bool(layer.get("mlp_output_bias_compensation")) for layer in layers
+        ),
+        "layer_scale_enabled": any(
+            layer.get("mlp_output_scale") is not None for layer in layers
+        ),
+        "substrate_method": plan.get("substrate_method"),
+        "substrate_global_target": plan.get("global_target"),
+        "substrate_actual_sparsity": budget_plan.get("actual_sparsity"),
+    }
+
+
+def _real_plan_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
+    summary = _plan_summary(plan)
+    summary.update(_plan_diagnostics(plan))
+    return summary
+
+
 def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dict[str, Any]:
     manifest = {}
     regular_specs = {
@@ -525,12 +632,14 @@ def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dic
                 "mode": "routing_policy",
                 "policy": spec["policy"].__dict__,
                 "default_stage": spec["default_stage"],
-                "observe": _plan_summary(spec["observe_plan"]),
-                "fallback": _plan_summary(spec["fallback_plan"]),
+                "observe": _real_plan_summary(spec["observe_plan"]),
+                "fallback": _real_plan_summary(spec["fallback_plan"]),
                 "failure_events": spec["failure_events"],
                 "recovery_window_steps": spec["recovery_window_steps"],
+                "substrate_plan_name": spec.get("substrate_plan_name"),
+                "substrate_plan_path": spec.get("substrate_plan_path"),
                 "stages": {
-                    stage: _plan_summary(plan)
+                    stage: _real_plan_summary(plan)
                     for stage, plan in sorted(spec["stage_plans"].items())
                 },
             }
@@ -677,7 +786,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=REAL_TOOL_METHODS,
         default=DEFAULT_REAL_TOOL_METHODS,
     )
     parser.add_argument("--failure-only", action="store_true")
@@ -702,6 +810,22 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Per-generation theoretical routing probe cost counted outside active FFN cost.",
+    )
+    parser.add_argument(
+        "--substrate-plan",
+        action="append",
+        default=[],
+        help=(
+            "External substrate v2 plan JSON. Repeat for multiple plans. "
+            "Each plan registers substrate_<name>_stage_reflect_dense and "
+            "substrate_<name>_observe_failure_redense."
+        ),
+    )
+    parser.add_argument(
+        "--substrate-name",
+        action="append",
+        default=[],
+        help="Optional name for each --substrate-plan, e.g. flap_0p05.",
     )
     return parser.parse_args()
 
@@ -740,6 +864,19 @@ def main() -> None:
         config,
         router_prefill_cost=args.centroid_router_prefill_cost,
     )
+    substrate_plans = _load_substrate_plans(args.substrate_plan, args.substrate_name)
+    if substrate_plans:
+        identity_plan = _empty_plan_like(mask_bank.select("observe", 0.01))
+        _register_substrate_specs(
+            specs,
+            substrate_plans=substrate_plans,
+            identity_plan=identity_plan,
+            config=config,
+        )
+    unknown_methods = [method for method in args.methods if method not in specs]
+    if unknown_methods:
+        known = ", ".join(sorted(specs))
+        raise ValueError(f"Unknown methods: {unknown_methods}. Known methods: {known}")
     plans_manifest = _plans_manifest(specs, args.methods)
     if any(specs[method]["mode"] == "hidden_state_centroid" for method in args.methods):
         plans_manifest["_hidden_state_router"] = {

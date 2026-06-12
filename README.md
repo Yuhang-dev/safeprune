@@ -190,6 +190,30 @@ python scripts/evaluate_pruning_ppl.py \
   --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/ppl_0p05.json
 ```
 
+Run Real Tool smoke with external substrate plans:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --substrate-name flap_0p03 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --substrate-name flap_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    substrate_flap_0p03_stage_reflect_dense \
+    substrate_flap_0p05_stage_reflect_dense \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p05_observe_failure_redense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
+```
+
 Run local unit tests:
 
 ```bash

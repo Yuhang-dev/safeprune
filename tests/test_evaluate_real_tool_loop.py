@@ -1,4 +1,5 @@
 import unittest
+import types
 from unittest.mock import patch
 
 from safeprune.agent_loop import summarize_real_tool_rows
@@ -9,6 +10,8 @@ from scripts.evaluate_real_tool_loop import (
     RoutingPolicy,
     _MethodRuntime,
     _build_pairwise,
+    _infer_substrate_name,
+    _register_substrate_specs,
 )
 
 
@@ -138,6 +141,52 @@ class EvaluateRealToolLoopTests(unittest.TestCase):
         self.assertEqual(route.selected_stage, "observe")
         self.assertEqual(route.selected_plan_name, "observe")
         self.assertAlmostEqual(route.active_ffn_ratio, 0.96)
+
+    def test_substrate_name_infers_method_suffix_from_plan_path(self):
+        self.assertEqual(
+            _infer_substrate_name("outputs/substrate_v2/flap/budget_plan_0p05.json"),
+            "flap_0p05",
+        )
+
+    def test_substrate_stage_reflect_dense_uses_sparse_plan_then_dense_reflect(self):
+        substrate_plan = _plan(10)
+        substrate_plan["substrate_method"] = "flap"
+        substrate_plan["global_target"] = 0.10
+        substrate_plan["budget_plan"] = {"actual_sparsity": 0.10}
+        substrate_plan["layers"][0]["mlp_output_bias_compensation"] = [0.0]
+        substrate_plan["layers"][0]["mlp_output_scale"] = 1.0
+        specs = {}
+        config = types.SimpleNamespace(
+            agent=types.SimpleNamespace(
+                stages=["plan", "observe", "reflect", "answer"],
+                failure_events=["timeout"],
+                recovery_window_steps=2,
+            )
+        )
+        _register_substrate_specs(
+            specs,
+            substrate_plans=[("flap_0p10", substrate_plan, "plan.json")],
+            identity_plan=_plan(0),
+            config=config,
+        )
+        runtime = _MethodRuntime.__new__(_MethodRuntime)
+        runtime.model = None
+        runtime.tokenizer = None
+        runtime.hidden_router = None
+        runtime.mask_handle = None
+        runtime.failure_router = None
+        runtime.spec = specs["substrate_flap_0p10_stage_reflect_dense"]
+        runtime._set_plan = lambda _plan: None
+
+        plan_route = runtime.route("plan", "start", [])
+        reflect_route = runtime.route("reflect", "timeout", [])
+
+        self.assertEqual(plan_route.selected_plan_name, "flap_0p10")
+        self.assertAlmostEqual(plan_route.active_ffn_ratio, 0.9)
+        self.assertTrue(plan_route.metadata["bias_compensation_enabled"])
+        self.assertTrue(plan_route.metadata["layer_scale_enabled"])
+        self.assertEqual(reflect_route.selected_stage, "dense_fallback")
+        self.assertAlmostEqual(reflect_route.active_ffn_ratio, 1.0)
 
     def test_hidden_centroid_can_use_sparse_reflect_plan(self):
         runtime = _hidden_runtime(reflect_mode="stage")

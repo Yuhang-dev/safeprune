@@ -225,6 +225,34 @@ python scripts/evaluate_pruning_ppl.py \
 
 只有通过 PPL sanity 的 `3% / 5% / 10%` plan 才接回 Real Tool 100 smoke。
 
+### P2 Real Tool smoke with external substrate plans
+
+`evaluate_real_tool_loop.py` 支持用外部 substrate plan 注册动态方法。先跑核心 6 个方法：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --substrate-name flap_0p03 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --substrate-name flap_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    substrate_flap_0p03_stage_reflect_dense \
+    substrate_flap_0p05_stage_reflect_dense \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p05_observe_failure_redense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
+```
+
+如果这组稳定，再把 `0p20` 作为压力 smoke 单独加进去。
+
 ### Historical v1 commands
 
 Generate a 100-task smoke set:
