@@ -219,6 +219,7 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if row.get("recovery_steps") is not None
     ]
     collapse = sum(1 for row in rows if row["collapse"])
+    hidden_detection = _summarize_hidden_state_routing(rows)
 
     by_tool: dict[str, Counter] = {}
     for row in rows:
@@ -262,6 +263,21 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "router_inclusive_cost_per_success": (
             inclusive_cost / successes if successes else None
         ),
+        "routing_probe_cost": router_prefill_cost,
+        "routing_probe_latency_ms": hidden_detection["routing_probe_latency_ms"],
+        "routing_probe_latency_ms_mean": hidden_detection["routing_probe_latency_ms_mean"],
+        "effective_cost_per_success": inclusive_cost / successes if successes else None,
+        "reflect_detection_precision": hidden_detection["reflect_detection_precision"],
+        "reflect_detection_recall": hidden_detection["reflect_detection_recall"],
+        "reflect_detection_f1": hidden_detection["reflect_detection_f1"],
+        "false_dense_fallback_rate": hidden_detection["false_dense_fallback_rate"],
+        "missed_reflect_rate": hidden_detection["missed_reflect_rate"],
+        "hidden_router_step_count": hidden_detection["hidden_router_step_count"],
+        "hidden_reflect_predicted_count": hidden_detection["hidden_reflect_predicted_count"],
+        "hidden_reflect_true_positive_count": hidden_detection[
+            "hidden_reflect_true_positive_count"
+        ],
+        "hidden_selected_dense_count": hidden_detection["hidden_selected_dense_count"],
         "dense_fallback_step_count": dense_fallback_steps,
         "dense_fallback_task_count": dense_fallback_tasks,
         "dense_fallback_rate": dense_fallback_steps / generation_steps if generation_steps else 0.0,
@@ -290,6 +306,76 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             }
             for tool, counts in sorted(by_tool.items())
         },
+    }
+
+
+def _summarize_hidden_state_routing(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    hidden_steps = []
+    for row in rows:
+        for trace in row.get("routing_trace", []):
+            metadata = trace.get("route_metadata") or {}
+            if "centroid_predicted_stage" in metadata:
+                hidden_steps.append(trace)
+
+    if not hidden_steps:
+        return {
+            "routing_probe_latency_ms": 0.0,
+            "routing_probe_latency_ms_mean": None,
+            "reflect_detection_precision": None,
+            "reflect_detection_recall": None,
+            "reflect_detection_f1": None,
+            "false_dense_fallback_rate": None,
+            "missed_reflect_rate": None,
+            "hidden_router_step_count": 0,
+            "hidden_reflect_predicted_count": 0,
+            "hidden_reflect_true_positive_count": 0,
+            "hidden_selected_dense_count": 0,
+        }
+
+    predicted_reflect = 0
+    actual_reflect = 0
+    true_positive = 0
+    selected_dense = 0
+    false_dense = 0
+    missed_reflect = 0
+    non_reflect = 0
+    probe_latency_ms = 0.0
+
+    for trace in hidden_steps:
+        metadata = trace.get("route_metadata") or {}
+        is_predicted_reflect = bool(metadata.get("centroid_reflect_predicted"))
+        is_actual_reflect = trace.get("stage") == "reflect"
+        is_dense = trace.get("selected_stage") == "dense_fallback"
+        probe_latency_ms += float(metadata.get("routing_probe_latency_ms", 0.0))
+
+        predicted_reflect += int(is_predicted_reflect)
+        actual_reflect += int(is_actual_reflect)
+        non_reflect += int(not is_actual_reflect)
+        true_positive += int(is_predicted_reflect and is_actual_reflect)
+        selected_dense += int(is_dense)
+        false_dense += int(is_dense and not is_actual_reflect)
+        missed_reflect += int(is_actual_reflect and not is_dense)
+
+    precision = true_positive / predicted_reflect if predicted_reflect else None
+    recall = true_positive / actual_reflect if actual_reflect else None
+    f1 = (
+        (2 * precision * recall) / (precision + recall)
+        if precision is not None and recall is not None and (precision + recall) > 0
+        else None
+    )
+
+    return {
+        "routing_probe_latency_ms": probe_latency_ms,
+        "routing_probe_latency_ms_mean": probe_latency_ms / len(hidden_steps),
+        "reflect_detection_precision": precision,
+        "reflect_detection_recall": recall,
+        "reflect_detection_f1": f1,
+        "false_dense_fallback_rate": false_dense / non_reflect if non_reflect else None,
+        "missed_reflect_rate": missed_reflect / actual_reflect if actual_reflect else None,
+        "hidden_router_step_count": len(hidden_steps),
+        "hidden_reflect_predicted_count": predicted_reflect,
+        "hidden_reflect_true_positive_count": true_positive,
+        "hidden_selected_dense_count": selected_dense,
     }
 
 

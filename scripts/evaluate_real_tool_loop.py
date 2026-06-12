@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -12,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from safeprune.agent_loop import RouteOutcome, run_real_tool_episode, summarize_real_tool_rows
+from safeprune.agent_loop import REFLECT_EVENTS, RouteOutcome, run_real_tool_episode, summarize_real_tool_rows
 from safeprune.config import load_config
 from safeprune.data import AgentStep
 from safeprune.hidden_state_router import HiddenStateCentroidRouter
@@ -43,6 +44,8 @@ REAL_TOOL_METHODS = [
     "stage_reflect_dense_global_balanced_approx_0.01",
     "stage_reflect_observe_global_balanced_approx_0.01",
     "hidden_state_centroid_global_balanced_approx_0.01",
+    "hidden_state_centroid_reflect_dense_global_balanced_approx_0.01",
+    "hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01",
 ]
 DEFAULT_REAL_TOOL_METHODS = [
     "dense",
@@ -241,7 +244,7 @@ class _MethodRuntime:
             return self._route_policy(stage, event)
 
         if self.spec["mode"] == "hidden_state_centroid":
-            return self._route_hidden_centroid(messages)
+            return self._route_hidden_centroid(stage, event, messages)
 
         raise ValueError(f"Unsupported method mode: {self.spec['mode']}")
 
@@ -350,29 +353,67 @@ class _MethodRuntime:
             return selected_stage, selected_stage, self.spec["stage_plans"][selected_stage]
         raise ValueError(f"Unsupported routing policy mode: {mode}")
 
-    def _route_hidden_centroid(self, messages: list[dict[str, str]]) -> RouteOutcome:
+    def _route_hidden_centroid(
+        self,
+        stage: str,
+        event: str,
+        messages: list[dict[str, str]],
+    ) -> RouteOutcome:
         if self.hidden_router is None:
             raise ValueError("hidden_state_centroid mode requires a centroid router")
         identity_plan = self.spec["identity_plan"]
         self._set_plan(identity_plan)
+        probe_start = time.perf_counter()
         vector = _last_hidden_vector(self.tokenizer, self.model, messages)
+        probe_latency_ms = (time.perf_counter() - probe_start) * 1000.0
         centroid_route = self.hidden_router.route(vector)
         stage_plans = self.spec["stage_plans"]
-        selected_stage = (
-            centroid_route.stage
-            if centroid_route.stage in stage_plans
-            else self.spec["default_stage"]
-        )
-        plan = stage_plans[selected_stage]
+
+        centroid_reflect = centroid_route.stage == "reflect"
+        event_reflect = event in REFLECT_EVENTS
+        event_override = bool(self.spec.get("event_override", False)) and event_reflect
+        reflect_triggered = centroid_reflect or event_override
+        reflect_mode = self.spec.get("reflect_mode", "stage")
+
+        if reflect_triggered and reflect_mode == "dense":
+            selected_stage = "dense_fallback"
+            selected_plan_name = (
+                "hidden_event_reflect_dense"
+                if event_override and not centroid_reflect
+                else "hidden_reflect_dense"
+            )
+            plan = self.spec["fallback_plan"]
+            route_source = "event" if event_override and not centroid_reflect else "hidden"
+        else:
+            selected_stage = (
+                centroid_route.stage
+                if centroid_route.stage in stage_plans
+                else self.spec["default_stage"]
+            )
+            selected_plan_name = f"hidden_{selected_stage}"
+            plan = stage_plans[selected_stage]
+            route_source = "hidden"
+
         self._set_plan(plan)
         return RouteOutcome(
             selected_stage=selected_stage,
             reason="hidden_state_centroid",
             active_ffn_ratio=active_mlp_ratio_from_plan(plan),
             plan=plan,
-            router_prefill_cost=1.0,
-            selected_plan_name=selected_stage,
-            metadata={"centroid_score": centroid_route.score},
+            router_prefill_cost=float(self.spec.get("router_prefill_cost", 1.0)),
+            selected_plan_name=selected_plan_name,
+            metadata={
+                "centroid_predicted_stage": centroid_route.stage,
+                "centroid_score": centroid_route.score,
+                "centroid_reflect_predicted": centroid_reflect,
+                "event_reflect": event_reflect,
+                "event_override": event_override,
+                "reflect_route_source": route_source,
+                "routing_probe_latency_ms": probe_latency_ms,
+                "router_prefill_cost": float(self.spec.get("router_prefill_cost", 1.0)),
+                "fallback_remaining_before": 0,
+                "fallback_remaining_after": 0,
+            },
         )
 
     def _set_plan(self, plan: dict[str, Any] | None) -> None:
@@ -385,7 +426,12 @@ class _MethodRuntime:
             self.mask_handle.set_plan(plan)
 
 
-def _extend_method_specs(mask_bank, config) -> dict[str, dict[str, Any]]:
+def _extend_method_specs(
+    mask_bank,
+    config,
+    *,
+    router_prefill_cost: float = 1.0,
+) -> dict[str, dict[str, Any]]:
     specs = _build_method_specs(mask_bank, config)
     allocation = _global_balanced_allocation()
     balanced_stage_plans = _stage_plans(mask_bank, allocation)
@@ -435,6 +481,30 @@ def _extend_method_specs(mask_bank, config) -> dict[str, dict[str, Any]]:
         "mode": "hidden_state_centroid",
         "stage_plans": balanced_stage_plans,
         "identity_plan": identity_plan,
+        "fallback_plan": identity_plan,
+        "reflect_mode": "stage",
+        "event_override": False,
+        "router_prefill_cost": router_prefill_cost,
+        "default_stage": "answer",
+    }
+    specs["hidden_state_centroid_reflect_dense_global_balanced_approx_0.01"] = {
+        "mode": "hidden_state_centroid",
+        "stage_plans": balanced_stage_plans,
+        "identity_plan": identity_plan,
+        "fallback_plan": identity_plan,
+        "reflect_mode": "dense",
+        "event_override": False,
+        "router_prefill_cost": router_prefill_cost,
+        "default_stage": "answer",
+    }
+    specs["hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01"] = {
+        "mode": "hidden_state_centroid",
+        "stage_plans": balanced_stage_plans,
+        "identity_plan": identity_plan,
+        "fallback_plan": identity_plan,
+        "reflect_mode": "dense",
+        "event_override": True,
+        "router_prefill_cost": router_prefill_cost,
         "default_stage": "answer",
     }
     return specs
@@ -470,7 +540,9 @@ def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dic
         manifest[method] = {
             "mode": "hidden_state_centroid",
             "default_stage": spec["default_stage"],
-            "router_prefill_cost": "1.0 per generation step, counted separately.",
+            "reflect_mode": spec.get("reflect_mode", "stage"),
+            "event_override": bool(spec.get("event_override", False)),
+            "router_prefill_cost": spec.get("router_prefill_cost", 1.0),
             "stages": {
                 stage: {
                     "active_ratio": active_mlp_ratio_from_plan(plan),
@@ -613,6 +685,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-prefix")
     parser.add_argument("--max-new-tokens", type=int, default=96)
     parser.add_argument("--max-centroid-calibration-tasks", type=int, default=24)
+    parser.add_argument(
+        "--centroid-calibration-tasks",
+        help="Optional JSONL task file used only to build hidden-state centroids.",
+    )
+    parser.add_argument(
+        "--load-centroid-router",
+        help="Load a saved hidden-state centroid router JSON instead of rebuilding it.",
+    )
+    parser.add_argument(
+        "--save-centroid-router",
+        help="Optional path to save the hidden-state centroid router JSON.",
+    )
+    parser.add_argument(
+        "--centroid-router-prefill-cost",
+        type=float,
+        default=1.0,
+        help="Per-generation theoretical routing probe cost counted outside active FFN cost.",
+    )
     return parser.parse_args()
 
 
@@ -645,11 +735,25 @@ def main() -> None:
 
     print(f"Loading mask bank: {mask_bank_path}", flush=True)
     mask_bank = load_stage_mask_bank(mask_bank_path)
-    specs = _extend_method_specs(mask_bank, config)
-    plans_path.write_text(
-        json.dumps(_plans_manifest(specs, args.methods), indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    specs = _extend_method_specs(
+        mask_bank,
+        config,
+        router_prefill_cost=args.centroid_router_prefill_cost,
     )
+    plans_manifest = _plans_manifest(specs, args.methods)
+    if any(specs[method]["mode"] == "hidden_state_centroid" for method in args.methods):
+        plans_manifest["_hidden_state_router"] = {
+            "centroid_calibration_tasks": args.centroid_calibration_tasks,
+            "max_centroid_calibration_tasks": args.max_centroid_calibration_tasks,
+            "load_centroid_router": args.load_centroid_router,
+            "save_centroid_router": args.save_centroid_router,
+            "router_prefill_cost_per_generation": args.centroid_router_prefill_cost,
+            "note": (
+                "Use a calibration task file distinct from the frozen eval task file for "
+                "paper-grade hidden-state baselines."
+            ),
+        }
+    plans_path.write_text(json.dumps(plans_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote plan manifest to {plans_path}", flush=True)
 
     print(f"Loading model: {config.model.base_model}", flush=True)
@@ -657,13 +761,39 @@ def main() -> None:
 
     hidden_router = None
     if any(specs[method]["mode"] == "hidden_state_centroid" for method in args.methods):
-        print("Building hidden-state centroid router", flush=True)
-        hidden_router = _build_hidden_centroid_router(
-            tokenizer=tokenizer,
-            model=model,
-            tasks=tasks,
-            max_tasks=args.max_centroid_calibration_tasks,
-        )
+        if args.load_centroid_router:
+            router_path = Path(args.load_centroid_router)
+            print(f"Loading hidden-state centroid router: {router_path}", flush=True)
+            hidden_router = HiddenStateCentroidRouter.from_dict(
+                json.loads(router_path.read_text(encoding="utf-8"))
+            )
+        else:
+            calibration_tasks = (
+                load_real_tool_tasks(args.centroid_calibration_tasks)
+                if args.centroid_calibration_tasks
+                else tasks
+            )
+            if args.centroid_calibration_tasks is None:
+                print(
+                    "WARNING: building centroid router from eval tasks; use "
+                    "--centroid-calibration-tasks for paper-grade runs.",
+                    flush=True,
+                )
+            print("Building hidden-state centroid router", flush=True)
+            hidden_router = _build_hidden_centroid_router(
+                tokenizer=tokenizer,
+                model=model,
+                tasks=calibration_tasks,
+                max_tasks=args.max_centroid_calibration_tasks,
+            )
+        if args.save_centroid_router:
+            router_path = Path(args.save_centroid_router)
+            router_path.parent.mkdir(parents=True, exist_ok=True)
+            router_path.write_text(
+                json.dumps(hidden_router.to_dict(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"Wrote hidden-state centroid router: {router_path}", flush=True)
 
     rows, metrics = _evaluate_methods(
         tasks=tasks,

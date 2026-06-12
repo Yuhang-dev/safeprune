@@ -110,8 +110,70 @@ docs/real_tool_v1_results.md
 python scripts/analyze_real_tool_v1_results.py
 ```
 
-下一轮远端优先跑 hidden-state centroid baseline 或 3% / 5% / 10% global FFN
-budget ladder。
+下一轮远端先跑 hidden-state centroid baseline，再进入 FLAP-style substrate v2
+和 3% / 5% / 10% global FFN budget ladder。
+
+### P1 hidden-state centroid baseline
+
+先生成独立 calibration tasks，避免从冻结的 1000 条 eval tasks 拟合 centroid：
+
+```bash
+export PYTHONPATH=$PWD:$PWD/src
+
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --count 500 \
+  --failure-count 100 \
+  --start-index 1000
+```
+
+100 条 smoke：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --centroid-calibration-tasks data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --max-centroid-calibration-tasks 500 \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    stage_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_global_balanced_approx_0.01 \
+    hidden_state_centroid_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01 \
+  --save-centroid-router outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/hidden_state_centroid_router_v1.json \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_smoke_100
+```
+
+1000 条正式：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --centroid-calibration-tasks data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --max-centroid-calibration-tasks 500 \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    stage_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_global_balanced_approx_0.01 \
+    hidden_state_centroid_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01 \
+  --load-centroid-router outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/hidden_state_centroid_router_v1.json \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
+```
+
+重点读这些指标：
+
+```text
+reflect_detection_precision / recall / f1
+false_dense_fallback_rate
+missed_reflect_rate
+routing_probe_cost
+effective_cost_per_success
+```
 
 ### Historical v1 commands
 
@@ -159,10 +221,12 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000
 ```
 
-The hidden-state centroid method is not part of the frozen v1 default table yet:
+The hidden-state centroid methods are not part of the frozen v1 default table yet:
 
 ```text
 hidden_state_centroid_global_balanced_approx_0.01
+hidden_state_centroid_reflect_dense_global_balanced_approx_0.01
+hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01
 ```
 
 For the first smoke run, it is acceptable to omit the centroid method and add it

@@ -52,9 +52,10 @@ failure / reflect 轨迹信号可以定位高价值计算步骤。
 下一步不要继续补同配置 1000。优先级是：
 
 ```text
-1. 跑 hidden_state_centroid_global_balanced_approx_0.01 作为审稿 baseline。
-2. 做 3% / 5% / 10% global FFN budget ladder。
-3. 研究 FLAP-style scoring、layer-wise budget、bias/scale compensation。
+1. 跑 hidden-state centroid baseline：pure centroid、reflect-dense centroid、event hybrid。
+2. 实现 FLAP-style scoring、global layer-wise budget、bias/scale compensation。
+3. 做 3% / 5% / 10% global FFN budget ladder。
+4. compact subnet / kernel 后再报告真实加速。
 ```
 
 ## 1. 当前阶段
@@ -186,20 +187,25 @@ src/safeprune/hidden_state_router.py
 
 ```text
 hidden_state_centroid_global_balanced_approx_0.01
+hidden_state_centroid_reflect_dense_global_balanced_approx_0.01
+hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01
 ```
 
 用途：
 
 ```text
-作为第一版 hidden-state-only dynamic router 对照；
-不训练 probe，只用校准任务 hidden state centroid 做最近中心路由。
+作为第一版 hidden-state dynamic router 对照；
+pure centroid 检查 hidden state 是否能隐式识别阶段；
+reflect-dense centroid 与 stage_reflect_dense 做公平比较；
+event hybrid 检查显式 failure / reflect 信号是否能补强 hidden state。
 ```
 
 注意：
 
 ```text
 centroid router 需要额外 prefill hidden-state 计算；
-metrics 中单独记录 router_prefill_cost 和 router_inclusive_cost_per_success。
+metrics 中单独记录 routing_probe_cost、routing_probe_latency_ms、
+reflect_detection_precision / recall / f1 和 effective_cost_per_success。
 ```
 
 ## 4. 当前远端状态

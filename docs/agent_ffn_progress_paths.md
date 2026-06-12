@@ -43,7 +43,8 @@ Real Tool-Execution Agent Prune v1 已冻结。
 这些已经完成。现在也不再补同配置 real-tool 1000。主线已经转为：
 
 ```text
-hidden-state-only baseline
+hidden-state centroid / reflect-dense / event-hybrid baseline
+FLAP-style substrate v2
 3% / 5% / 10% global FFN budget ladder
 ```
 
@@ -118,6 +119,31 @@ stage-reflect-dense 达到 996/1000，failure subset 196/200，
 不是 stage-aware mask switching 全面优于 observe-only；
 而是 failure / reflect 轨迹信号可以定位 recovery 计算瓶颈，
 只在 reflect step 恢复 dense 即可接近固定窗口 redense 的鲁棒性，并减少 dense fallback steps。
+```
+
+P1 hidden-state baseline 已进入实现阶段。方法分为三档：
+
+```text
+hidden_state_centroid_global_balanced_approx_0.01
+hidden_state_centroid_reflect_dense_global_balanced_approx_0.01
+hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01
+```
+
+这一步要回答：
+
+```text
+显式 failure / reflect 事件是否比模型 hidden state 自身提供更可靠、更低成本的恢复计算分配信号？
+```
+
+新增指标包括：
+
+```text
+reflect_detection_precision / recall / f1
+false_dense_fallback_rate
+missed_reflect_rate
+routing_probe_cost
+routing_probe_latency_ms
+effective_cost_per_success
 ```
 
 ## 1. 已完成路径
@@ -627,12 +653,15 @@ Real Tool v1 已冻结。下一步不再补同配置 1000，而是加入：
 
 ```text
 hidden_state_centroid_global_balanced_approx_0.01
+hidden_state_centroid_reflect_dense_global_balanced_approx_0.01
+hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01
 ```
 
 目的：
 
 ```text
-回答 hidden-state-only routing 是否能替代显式 failure / reflect 轨迹信号。
+回答 hidden-state-only routing 是否能替代显式 failure / reflect 轨迹信号，
+以及显式 event override 是否能以接近零额外成本补强 hidden-state 路由。
 ```
 
 ### 历史 Step：real tool smoke
@@ -681,7 +710,7 @@ stage-aware 优于 observe-only。
 failure-redense 提升 failure subset。
 ```
 
-### 当前 Step 2：若 smoke 稳定，跑 real tool 1000
+### 历史 Step：real tool 1000
 
 ```bash
 python scripts/prepare_real_tool_tasks.py \
@@ -697,12 +726,16 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
 ```
 
-### 当前 Step 3：加入 hidden-state centroid baseline
+Real Tool v1 1000 已完成并冻结，当前不要继续补同配置 1000。
+
+### 当前 Step 2：运行 hidden-state centroid baseline
 
 方法名：
 
 ```text
 hidden_state_centroid_global_balanced_approx_0.01
+hidden_state_centroid_reflect_dense_global_balanced_approx_0.01
+hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01
 ```
 
 目的：

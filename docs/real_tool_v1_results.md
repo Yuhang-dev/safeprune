@@ -228,10 +228,53 @@ task success / failure recovery
 
 优先级：
 
-1. `[NEXT]` 加入 `hidden_state_centroid_global_balanced_approx_0.01`，作为 hidden-state-only 动态 router baseline。
-2. `[NEXT]` 比较 hidden-state-only 与 failure / reflect 显式轨迹信号，回答外部 Agent signal 是否提供额外价值。
-3. `[P2]` 启动底层剪枝率升级线：global budget ladder `3% / 5% / 10%`。
-4. `[P2]` 引入 FLAP-style fluctuation scoring、global layer-wise budget optimizer、bias / scale compensation。
+1. `[NEXT]` 跑 hidden-state centroid baseline，分三档：
+   `hidden_state_centroid_global_balanced_approx_0.01`、
+   `hidden_state_centroid_reflect_dense_global_balanced_approx_0.01`、
+   `hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01`。
+2. `[NEXT]` 比较 hidden-state-only、hidden reflect-dense、hidden+event hybrid 与 `stage_reflect_dense`，回答外部 Agent signal 是否比 hidden state 更可靠、更低成本。
+3. `[P2]` 启动底层剪枝率升级线：FLAP-style fluctuation scoring、global layer-wise budget optimizer、bias / scale compensation。
+4. `[P2]` 做 global FFN budget ladder：`3% / 5% / 10%`。
 5. `[P3]` compact subnet 或 kernel 实现后，才能报告真实 latency / throughput。
 
 Real Tool v1 到此冻结，不继续补同配置 1000 条。
+
+### P1 hidden-state centroid baseline 命令
+
+P1 必须使用独立 calibration tasks，不能直接用冻结的 1000 条 eval tasks 拟合 centroid：
+
+```bash
+export PYTHONPATH=$PWD:$PWD/src
+
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --count 500 \
+  --failure-count 100 \
+  --start-index 1000
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --centroid-calibration-tasks data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --max-centroid-calibration-tasks 500 \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    stage_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_global_balanced_approx_0.01 \
+    hidden_state_centroid_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01 \
+  --save-centroid-router outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/hidden_state_centroid_router_v1.json \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
+```
+
+新增输出指标：
+
+```text
+reflect_detection_precision / recall / f1
+false_dense_fallback_rate
+missed_reflect_rate
+routing_probe_cost
+routing_probe_latency_ms
+effective_cost_per_success
+```

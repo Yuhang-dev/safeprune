@@ -27,8 +27,9 @@ cost per successful task = total active FFN cost / successful tasks
 | Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
 | Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
-| Hidden-state centroid router | `[NEXT]` | 加入 `hidden_state_centroid_global_balanced_approx_0.01`，作为 hidden-state-only 审稿基线。 |
-| Budget ladder | `[NEXT]` | 基于 Real Tool v1 的稳定路由，推进 3% / 5% / 10% global FFN budget。 |
+| Hidden-state centroid router | `[IN PROGRESS]` | 加入 pure centroid、centroid reflect-dense、centroid+event hybrid 三个审稿基线。 |
+| FLAP-style substrate v2 | `[NEXT]` | 升级底层 FFN scoring、global layer-wise budget 和 compensation。 |
+| Budget ladder | `[NEXT]` | 在 substrate v2 上推进 3% / 5% / 10% global FFN budget。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -95,7 +96,7 @@ Reflect-localized re-densification
 | `event` | `tool_error/schema_error/timeout/premature_final` 定位 recovery bottleneck。 |
 | `observation` | 第一版只通过 step text 和 event 进入统计，后续再建模。 |
 | `reflect` | Real Tool v1 显示只在 reflect recovery step 做 dense fallback 即可接近固定窗口 redense。 |
-| `hidden state` | 下一步加入 centroid router，检验外部轨迹信号是否超过 hidden-state-only。 |
+| `hidden state` | P1 加入 centroid router、reflect-dense centroid 和 event hybrid，检验外部轨迹信号是否超过 hidden-state-only。 |
 
 Real Tool v1 冻结策略：
 
@@ -158,9 +159,34 @@ outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000*
 docs/real_tool_v1_results.md
 ```
 
-6. `[NEXT]` 加入 hidden-state centroid router 对照。
-7. `[NEXT]` 做 3% / 5% / 10% global FFN budget ladder。
-8. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+6. `[IN PROGRESS]` 加入 hidden-state centroid router 对照：
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --count 500 \
+  --failure-count 100 \
+  --start-index 1000
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --centroid-calibration-tasks data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --max-centroid-calibration-tasks 500 \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    stage_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_global_balanced_approx_0.01 \
+    hidden_state_centroid_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01 \
+  --save-centroid-router outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/hidden_state_centroid_router_v1.json \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
+```
+
+7. `[NEXT]` 实现 FLAP-style substrate v2。
+8. `[NEXT]` 做 3% / 5% / 10% global FFN budget ladder。
+9. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 

@@ -8,12 +8,13 @@ from pathlib import Path
 FAILURE_EVENTS = ["timeout", "empty_observation", "tool_error"]
 
 
-def build_tasks(count: int, failure_count: int) -> list[dict]:
+def build_tasks(count: int, failure_count: int, start_index: int = 0) -> list[dict]:
     tasks = []
     failure_ids = set(_failure_indices(count, failure_count))
-    for idx in range(count):
+    for local_idx in range(count):
+        idx = start_index + local_idx
         tool_kind = idx % 3
-        has_failure = idx in failure_ids
+        has_failure = local_idx in failure_ids
         if tool_kind == 0:
             task = _calculator_task(idx)
         elif tool_kind == 1:
@@ -104,10 +105,16 @@ def main() -> None:
     parser.add_argument("--output", default="data/agent/real_tool_tasks_v1.jsonl")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--failure-count", type=int)
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Starting task index. Use a non-overlapping offset for calibration sets.",
+    )
     args = parser.parse_args()
 
     failure_count = args.failure_count if args.failure_count is not None else args.count // 5
-    rows = build_tasks(args.count, failure_count)
+    rows = build_tasks(args.count, failure_count, start_index=args.start_index)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as handle:

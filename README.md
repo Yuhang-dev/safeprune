@@ -25,9 +25,10 @@ The default project route is:
 3. Use Real Tool v1's central finding as the current paper story: failure
    recovery is a localized reflect-step compute bottleneck, and trajectory
    events can trigger targeted re-densification.
-4. Add `hidden_state_centroid_global_balanced_approx_0.01` as the first
-   hidden-state-only dynamic routing baseline after the real tool smoke is
-   stable.
+4. Add hidden-state dynamic routing baselines after Real Tool v1:
+   `hidden_state_centroid_global_balanced_approx_0.01`,
+   `hidden_state_centroid_reflect_dense_global_balanced_approx_0.01`, and
+   `hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01`.
 5. Start a bottom-up pruning budget ladder, targeting 3%, 5%, and 10% global FFN
    budgets with layer-wise allocation and compensation.
 6. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
@@ -134,6 +135,31 @@ Analyze the frozen Real Tool v1 result:
 
 ```bash
 python scripts/analyze_real_tool_v1_results.py
+```
+
+Run the next hidden-state centroid baseline with a separate calibration set:
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --count 500 \
+  --failure-count 100 \
+  --start-index 1000
+
+python scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --centroid-calibration-tasks data/agent/real_tool_tasks_v1_centroid_calib_500.jsonl \
+  --max-centroid-calibration-tasks 500 \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --methods \
+    stage_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_global_balanced_approx_0.01 \
+    hidden_state_centroid_reflect_dense_global_balanced_approx_0.01 \
+    hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01 \
+  --save-centroid-router outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/hidden_state_centroid_router_v1.json \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
 ```
 
 Run local unit tests:
