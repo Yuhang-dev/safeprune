@@ -18,12 +18,19 @@ class ForwardMaskHandle:
 class SwitchableForwardMaskHandle:
     handles: list[Any]
     layer_masks: list[Any]
+    layer_biases: list[Any]
+    layer_scales: list[Any]
     intermediate_size: int
+    hidden_size: int
 
     def set_plan(self, plan: dict[str, Any]) -> None:
         torch = _require_torch()
         for layer_mask in self.layer_masks:
             layer_mask.fill_(1.0)
+        for layer_bias in self.layer_biases:
+            layer_bias.zero_()
+        for layer_scale in self.layer_scales:
+            layer_scale.fill_(1.0)
         for layer_plan in plan["layers"]:
             layer_idx = int(layer_plan["layer"])
             if layer_idx >= len(self.layer_masks):
@@ -33,6 +40,20 @@ class SwitchableForwardMaskHandle:
                 if 0 <= int(channel_idx) < self.intermediate_size:
                     mask[int(channel_idx)] = 0.0
             self.layer_masks[layer_idx] = mask.reshape(1, 1, self.intermediate_size)
+            compensation = layer_plan.get("mlp_output_bias_compensation") or []
+            if compensation:
+                if len(compensation) != self.hidden_size:
+                    raise ValueError("MLP bias compensation width does not match hidden size.")
+                self.layer_biases[layer_idx] = torch.tensor(
+                    compensation,
+                    dtype=torch.float32,
+                ).reshape(1, 1, self.hidden_size)
+            scale = layer_plan.get("mlp_output_scale")
+            if scale is not None:
+                self.layer_scales[layer_idx] = torch.tensor(
+                    float(scale),
+                    dtype=torch.float32,
+                )
 
     def active_mlp_ratio(self) -> float:
         total = len(self.layer_masks) * self.intermediate_size
@@ -98,6 +119,22 @@ def attach_qwen_forward_masks(model, plan: dict[str, Any]) -> ForwardMaskHandle:
             handles.append(layer.mlp.gate_proj.register_forward_hook(mask_mlp_gate))
             handles.append(layer.mlp.up_proj.register_forward_hook(mask_mlp_up))
 
+        compensation = layer_plan.get("mlp_output_bias_compensation") or []
+        output_scale = layer_plan.get("mlp_output_scale")
+        if compensation or output_scale is not None:
+            hidden_size = int(getattr(model.config, "hidden_size"))
+            if compensation and len(compensation) != hidden_size:
+                raise ValueError("MLP bias compensation width does not match hidden size.")
+            bias = torch.tensor(compensation or [0.0] * hidden_size, dtype=torch.float32)
+            scale = torch.tensor(float(output_scale) if output_scale is not None else 1.0)
+
+            def compensate_mlp_output(_module, _inputs, output, bias=bias, scale=scale):
+                device_bias = bias.to(device=output.device, dtype=output.dtype).reshape(1, 1, -1)
+                device_scale = scale.to(device=output.device, dtype=output.dtype)
+                return output * device_scale + device_bias
+
+            handles.append(layer.mlp.down_proj.register_forward_hook(compensate_mlp_output))
+
     return ForwardMaskHandle(handles=handles)
 
 
@@ -115,8 +152,17 @@ def attach_qwen_switchable_mlp_masks(
     layers = _get_decoder_layers(model)
     handles = []
     intermediate = int(getattr(model.config, "intermediate_size"))
+    hidden_size = int(getattr(model.config, "hidden_size"))
     layer_masks = [
         torch.ones(1, 1, intermediate, dtype=torch.float32)
+        for _ in layers
+    ]
+    layer_biases = [
+        torch.zeros(1, 1, hidden_size, dtype=torch.float32)
+        for _ in layers
+    ]
+    layer_scales = [
+        torch.ones((), dtype=torch.float32)
         for _ in layers
     ]
 
@@ -130,13 +176,22 @@ def attach_qwen_switchable_mlp_masks(
             mask = layer_masks[idx].to(device=output.device, dtype=output.dtype)
             return output * mask
 
+        def compensate_mlp_output(_module, _inputs, output, idx=layer_idx):
+            bias = layer_biases[idx].to(device=output.device, dtype=output.dtype)
+            scale = layer_scales[idx].to(device=output.device, dtype=output.dtype)
+            return output * scale + bias
+
         handles.append(layer.mlp.gate_proj.register_forward_hook(mask_mlp_gate))
         handles.append(layer.mlp.up_proj.register_forward_hook(mask_mlp_up))
+        handles.append(layer.mlp.down_proj.register_forward_hook(compensate_mlp_output))
 
     handle = SwitchableForwardMaskHandle(
         handles=handles,
         layer_masks=layer_masks,
+        layer_biases=layer_biases,
+        layer_scales=layer_scales,
         intermediate_size=intermediate,
+        hidden_size=hidden_size,
     )
     if initial_plan is not None:
         handle.set_plan(initial_plan)

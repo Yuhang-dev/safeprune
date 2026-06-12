@@ -225,6 +225,10 @@ class EvaluateRealToolLoopTests(unittest.TestCase):
         self.assertEqual(metrics["routing_probe_latency_ms"], 12.0)
         self.assertEqual(metrics["reflect_detection_precision"], 0.5)
         self.assertEqual(metrics["reflect_detection_recall"], 1.0)
+        self.assertEqual(metrics["raw_reflect_detection_recall"], 1.0)
+        self.assertEqual(metrics["runner_reflect_transition_accuracy"], 1.0)
+        self.assertEqual(metrics["effective_reflect_redense_recall"], 1.0)
+        self.assertEqual(metrics["critical_reflect_miss_rate"], 0.0)
         self.assertEqual(metrics["false_dense_fallback_rate"], 1.0)
         self.assertEqual(metrics["missed_reflect_rate"], 0.0)
 

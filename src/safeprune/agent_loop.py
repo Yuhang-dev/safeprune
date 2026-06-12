@@ -210,6 +210,12 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     reflect_success_rows = [row for row in reflect_rows if row["success"]]
     reflect_expected = sum(row["reflect_expected_count"] for row in rows)
     reflect_actual = sum(row["reflect_actual_count"] for row in rows)
+    reflect_redense_steps = sum(
+        1
+        for row in rows
+        for trace in row.get("routing_trace", [])
+        if trace.get("stage") == "reflect" and trace.get("selected_stage") == "dense_fallback"
+    )
     successful_observation_tasks = sum(
         1 for row in rows if row["has_successful_tool_observation"]
     )
@@ -270,6 +276,9 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "reflect_detection_precision": hidden_detection["reflect_detection_precision"],
         "reflect_detection_recall": hidden_detection["reflect_detection_recall"],
         "reflect_detection_f1": hidden_detection["reflect_detection_f1"],
+        "raw_reflect_detection_precision": hidden_detection["reflect_detection_precision"],
+        "raw_reflect_detection_recall": hidden_detection["reflect_detection_recall"],
+        "raw_reflect_detection_f1": hidden_detection["reflect_detection_f1"],
         "false_dense_fallback_rate": hidden_detection["false_dense_fallback_rate"],
         "missed_reflect_rate": hidden_detection["missed_reflect_rate"],
         "hidden_router_step_count": hidden_detection["hidden_router_step_count"],
@@ -288,6 +297,15 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "reflect_expected_count": reflect_expected,
         "reflect_actual_count": reflect_actual,
         "reflect_route_accuracy": reflect_actual / reflect_expected if reflect_expected else None,
+        "runner_reflect_transition_accuracy": (
+            reflect_actual / reflect_expected if reflect_expected else None
+        ),
+        "effective_reflect_redense_recall": (
+            reflect_redense_steps / reflect_actual if reflect_actual else None
+        ),
+        "critical_reflect_miss_rate": (
+            1.0 - (reflect_redense_steps / reflect_actual) if reflect_actual else None
+        ),
         "reflect_entry_rate": len(reflect_rows) / total if total else 0.0,
         "reflect_success_rate": (
             len(reflect_success_rows) / len(reflect_rows) if reflect_rows else None

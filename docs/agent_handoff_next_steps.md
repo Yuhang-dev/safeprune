@@ -58,6 +58,21 @@ failure / reflect 轨迹信号可以定位高价值计算步骤。
 4. compact subnet / kernel 后再报告真实加速。
 ```
 
+当前 P2 substrate v2 已开始，新增远端入口：
+
+```text
+scripts/build_pruning_substrate_v2.py
+scripts/evaluate_pruning_ppl.py
+```
+
+P2 第一阶段目标：
+
+```text
+不要继续手工调 1%。
+先构建 activation / Wanda-channel / FLAP-style 的 1/3/5/10/20% budget plans。
+再做 PPL sanity，只有通过的 3/5/10% plan 才接回 Real Tool 100 smoke。
+```
+
 ## 1. 当前阶段
 
 当前主线已经收紧为：

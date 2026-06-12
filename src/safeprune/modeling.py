@@ -20,7 +20,12 @@ def resolve_torch_dtype(dtype_name: str):
     return mapping[dtype_name]
 
 
-def load_causal_lm_and_tokenizer(model_name_or_path: str, model_config, load_in_4bit: bool = False):
+def load_causal_lm_and_tokenizer(
+    model_name_or_path: str,
+    model_config,
+    load_in_4bit: bool = False,
+    local_files_only: bool = False,
+):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     kwargs: dict[str, Any] = {
@@ -37,10 +42,12 @@ def load_causal_lm_and_tokenizer(model_name_or_path: str, model_config, load_in_
         model_name_or_path,
         trust_remote_code=model_config.trust_remote_code,
         use_fast=True,
+        local_files_only=local_files_only,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    kwargs["local_files_only"] = local_files_only
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwargs)
     model.config.use_cache = False
     return model, tokenizer
@@ -58,4 +65,3 @@ def attach_lora(model, recovery_config):
         task_type="CAUSAL_LM",
     )
     return get_peft_model(model, lora_config)
-

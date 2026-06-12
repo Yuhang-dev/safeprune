@@ -28,7 +28,7 @@ cost per successful task = total active FFN cost / successful tasks
 | Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
 | Hidden-state centroid router | `[IN PROGRESS]` | 加入 pure centroid、centroid reflect-dense、centroid+event hybrid 三个审稿基线。 |
-| FLAP-style substrate v2 | `[NEXT]` | 升级底层 FFN scoring、global layer-wise budget 和 compensation。 |
+| FLAP-style substrate v2 | `[IN PROGRESS]` | 升级底层 FFN scoring、global layer-wise budget 和 compensation。 |
 | Budget ladder | `[NEXT]` | 在 substrate v2 上推进 3% / 5% / 10% global FFN budget。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
@@ -184,9 +184,36 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
 ```
 
-7. `[NEXT]` 实现 FLAP-style substrate v2。
-8. `[NEXT]` 做 3% / 5% / 10% global FFN budget ladder。
-9. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+7. `[IN PROGRESS]` 实现 FLAP-style substrate v2：
+
+```bash
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --max-calibration-prompts 512 \
+  --candidate-sparsities 0,0.02,0.05,0.10,0.20,0.30 \
+  --target-budgets 0.01,0.03,0.05,0.10,0.20 \
+  --score-methods activation wanda flap \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2
+```
+
+8. `[NEXT]` 对 substrate v2 plans 做 PPL sanity：
+
+```bash
+python scripts/evaluate_pruning_ppl.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --prompts-jsonl data/agent/controlled_tasks.jsonl \
+  --max-prompts 256 \
+  --local-files-only \
+  --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/ppl_0p05.json
+```
+
+9. `[NEXT]` 把通过静态 sanity 的 3% / 5% / 10% 接回 Real Tool 100 smoke。
+10. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 

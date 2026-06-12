@@ -162,6 +162,34 @@ python scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
 ```
 
+Build Pruning Substrate v2 budget plans:
+
+```bash
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --max-calibration-prompts 512 \
+  --candidate-sparsities 0,0.02,0.05,0.10,0.20,0.30 \
+  --target-budgets 0.01,0.03,0.05,0.10,0.20 \
+  --score-methods activation wanda flap \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2
+```
+
+Run a mask-hook PPL sanity check for a selected plan:
+
+```bash
+python scripts/evaluate_pruning_ppl.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --prompts-jsonl data/agent/controlled_tasks.jsonl \
+  --max-prompts 256 \
+  --local-files-only \
+  --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/ppl_0p05.json
+```
+
 Run local unit tests:
 
 ```bash

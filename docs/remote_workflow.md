@@ -175,6 +175,56 @@ routing_probe_cost
 effective_cost_per_success
 ```
 
+P1 1000 跑完后生成可贴进文档的分析表：
+
+```bash
+python scripts/analyze_hidden_state_p1_results.py \
+  --prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p1_hidden_1000
+```
+
+## 6.1 Pruning Substrate v2
+
+P2 不再继续手工调 `1%` mask。先构建 `1% / 3% / 5% / 10% / 20%`
+global FFN budget plans：
+
+```bash
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --max-calibration-prompts 512 \
+  --candidate-sparsities 0,0.02,0.05,0.10,0.20,0.30 \
+  --target-budgets 0.01,0.03,0.05,0.10,0.20 \
+  --score-methods activation wanda flap \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2
+```
+
+输出重点：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/substrate_v2/*/budget_plan_0p03.json
+outputs/agent_qwen2_5_3b_4090_low/substrate_v2/*/budget_plan_0p05.json
+outputs/agent_qwen2_5_3b_4090_low/substrate_v2/*/budget_plan_0p10.json
+outputs/agent_qwen2_5_3b_4090_low/substrate_v2/mask_bank_substrate_v2.json
+outputs/agent_qwen2_5_3b_4090_low/substrate_v2/substrate_v2_manifest.json
+```
+
+先对候选 plan 做 PPL sanity：
+
+```bash
+python scripts/evaluate_pruning_ppl.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --prompts-jsonl data/agent/controlled_tasks.jsonl \
+  --max-prompts 256 \
+  --local-files-only \
+  --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/ppl_0p05.json
+```
+
+只有通过 PPL sanity 的 `3% / 5% / 10%` plan 才接回 Real Tool 100 smoke。
+
 ### Historical v1 commands
 
 Generate a 100-task smoke set:
