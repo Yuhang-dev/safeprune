@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,7 @@ from scripts.evaluate_agent_masks import (
     _empty_plan_like,
     _load_model_and_tokenizer,
     _plan_manifest,
+    _plan_summary,
     _stage_plans,
     _global_balanced_allocation,
 )
@@ -36,15 +39,37 @@ REAL_TOOL_METHODS = [
     "global_balanced_observe_approx_0.01",
     "stage_global_balanced_approx_0.01",
     "failure_redense_global_balanced_approx_0.01",
+    "observe_failure_redense_global_balanced_approx_0.01",
+    "stage_reflect_dense_global_balanced_approx_0.01",
+    "stage_reflect_observe_global_balanced_approx_0.01",
     "hidden_state_centroid_global_balanced_approx_0.01",
+]
+DEFAULT_REAL_TOOL_METHODS = [
+    "dense",
+    "identity_hook",
+    "global_balanced_observe_approx_0.01",
+    "stage_global_balanced_approx_0.01",
+    "failure_redense_global_balanced_approx_0.01",
+    "observe_failure_redense_global_balanced_approx_0.01",
+    "stage_reflect_dense_global_balanced_approx_0.01",
+    "stage_reflect_observe_global_balanced_approx_0.01",
 ]
 
 
-def _artifact_paths(output_prefix: str) -> tuple[Path, Path, Path]:
+@dataclass(frozen=True)
+class RoutingPolicy:
+    base_mode: str
+    reflect_mode: str
+    failure_window_mode: str = "normal"
+
+
+def _artifact_paths(output_prefix: str) -> tuple[Path, Path, Path, Path, Path]:
     return (
         Path(f"{output_prefix}.jsonl"),
         Path(f"{output_prefix}_metrics.json"),
         Path(f"{output_prefix}_plans.json"),
+        Path(f"{output_prefix}_pairwise.json"),
+        Path(f"{output_prefix}_failures.jsonl"),
     )
 
 
@@ -187,11 +212,13 @@ class _MethodRuntime:
             plan = self.spec["plan"]
             self._set_plan(plan)
             ratio = 1.0 if plan is None else active_mlp_ratio_from_plan(plan)
+            plan_name = self.spec.get("plan_name", "dense" if plan is None else "static")
             return RouteOutcome(
                 selected_stage="dense" if plan is None else "static",
                 reason="static",
                 active_ffn_ratio=ratio,
                 plan=plan,
+                selected_plan_name=plan_name,
             )
 
         if self.spec["mode"] == "stage_dynamic":
@@ -204,10 +231,14 @@ class _MethodRuntime:
                 reason="stage_default",
                 active_ffn_ratio=active_mlp_ratio_from_plan(plan),
                 plan=plan,
+                selected_plan_name=selected_stage,
             )
 
         if self.spec["mode"] == "failure_redense_dynamic":
             return self._route_failure_redense(stage, event)
+
+        if self.spec["mode"] == "routing_policy":
+            return self._route_policy(stage, event)
 
         if self.spec["mode"] == "hidden_state_centroid":
             return self._route_hidden_centroid(messages)
@@ -224,14 +255,17 @@ class _MethodRuntime:
                 recovery_window_steps=self.spec["recovery_window_steps"],
             )
         router_event = None if event == "start" else event
+        fallback_remaining_before = self.failure_router._recovery_steps_remaining
         decision = self.failure_router.route(AgentStep(stage=stage, text="", event=router_event))
         if decision.sparsity == 0.0:
             selected_stage = "dense_fallback"
+            selected_plan_name = "dense_fallback"
             plan = self.spec["fallback_plan"]
         else:
             selected_stage = (
                 stage if stage in self.spec["stage_plans"] else self.spec["default_stage"]
             )
+            selected_plan_name = selected_stage
             plan = self.spec["stage_plans"][selected_stage]
         self._set_plan(plan)
         return RouteOutcome(
@@ -239,8 +273,82 @@ class _MethodRuntime:
             reason=decision.reason,
             active_ffn_ratio=active_mlp_ratio_from_plan(plan),
             plan=plan,
-            metadata={"recovery_steps_remaining": decision.recovery_steps_remaining},
+            selected_plan_name=selected_plan_name,
+            metadata={
+                "fallback_remaining_before": fallback_remaining_before,
+                "fallback_remaining_after": decision.recovery_steps_remaining,
+                "recovery_steps_remaining": decision.recovery_steps_remaining,
+            },
         )
+
+    def _route_policy(self, stage: str, event: str) -> RouteOutcome:
+        policy: RoutingPolicy = self.spec["policy"]
+        reason = "policy_default"
+        fallback_remaining_before = 0
+        fallback_remaining_after = 0
+
+        if policy.failure_window_mode == "dense":
+            if self.failure_router is None:
+                self.failure_router = FFNMaskRouter(
+                    stage_sparsities={stage_name: 0.01 for stage_name in self.spec["stage_plans"]},
+                    default_sparsity=0.01,
+                    failure_sparsity=0.0,
+                    failure_events=self.spec["failure_events"],
+                    recovery_window_steps=self.spec["recovery_window_steps"],
+                )
+            fallback_remaining_before = self.failure_router._recovery_steps_remaining
+            router_event = None if event == "start" else event
+            decision = self.failure_router.route(AgentStep(stage=stage, text="", event=router_event))
+            fallback_remaining_after = decision.recovery_steps_remaining
+            reason = decision.reason
+            if decision.sparsity == 0.0:
+                plan = self.spec["fallback_plan"]
+                self._set_plan(plan)
+                return RouteOutcome(
+                    selected_stage="dense_fallback",
+                    selected_plan_name="dense_fallback",
+                    reason=reason,
+                    active_ffn_ratio=active_mlp_ratio_from_plan(plan),
+                    plan=plan,
+                    metadata={
+                        "policy": policy.__dict__,
+                        "fallback_remaining_before": fallback_remaining_before,
+                        "fallback_remaining_after": fallback_remaining_after,
+                        "recovery_steps_remaining": decision.recovery_steps_remaining,
+                    },
+                )
+
+        mode = policy.reflect_mode if stage == "reflect" else policy.base_mode
+        selected_stage, selected_plan_name, plan = self._resolve_policy_plan(mode, stage)
+        self._set_plan(plan)
+        return RouteOutcome(
+            selected_stage=selected_stage,
+            selected_plan_name=selected_plan_name,
+            reason=reason,
+            active_ffn_ratio=active_mlp_ratio_from_plan(plan),
+            plan=plan,
+            metadata={
+                "policy": policy.__dict__,
+                "fallback_remaining_before": fallback_remaining_before,
+                "fallback_remaining_after": fallback_remaining_after,
+            },
+        )
+
+    def _resolve_policy_plan(
+        self,
+        mode: str,
+        stage: str,
+    ) -> tuple[str, str, dict[str, Any]]:
+        if mode == "dense":
+            return "dense_fallback", "reflect_dense", self.spec["fallback_plan"]
+        if mode == "observe":
+            return "observe", "observe", self.spec["observe_plan"]
+        if mode == "stage":
+            selected_stage = (
+                stage if stage in self.spec["stage_plans"] else self.spec["default_stage"]
+            )
+            return selected_stage, selected_stage, self.spec["stage_plans"][selected_stage]
+        raise ValueError(f"Unsupported routing policy mode: {mode}")
 
     def _route_hidden_centroid(self, messages: list[dict[str, str]]) -> RouteOutcome:
         if self.hidden_router is None:
@@ -263,6 +371,7 @@ class _MethodRuntime:
             active_ffn_ratio=active_mlp_ratio_from_plan(plan),
             plan=plan,
             router_prefill_cost=1.0,
+            selected_plan_name=selected_stage,
             metadata={"centroid_score": centroid_route.score},
         )
 
@@ -278,11 +387,54 @@ class _MethodRuntime:
 
 def _extend_method_specs(mask_bank, config) -> dict[str, dict[str, Any]]:
     specs = _build_method_specs(mask_bank, config)
-    observe_plan = mask_bank.select("observe", 0.01)
+    allocation = _global_balanced_allocation()
+    balanced_stage_plans = _stage_plans(mask_bank, allocation)
+    observe_plan = mask_bank.compose_layerwise_plan("observe", allocation)
+    identity_plan = _empty_plan_like(mask_bank.select("observe", 0.01))
+    specs["failure_redense_global_balanced_approx_0.01"] = {
+        "mode": "routing_policy",
+        "policy": RoutingPolicy("stage", "stage", "dense"),
+        "stage_plans": balanced_stage_plans,
+        "observe_plan": observe_plan,
+        "fallback_plan": identity_plan,
+        "default_stage": "answer",
+        "failure_events": list(config.agent.failure_events),
+        "recovery_window_steps": config.agent.recovery_window_steps,
+    }
+    specs["observe_failure_redense_global_balanced_approx_0.01"] = {
+        "mode": "routing_policy",
+        "policy": RoutingPolicy("observe", "observe", "dense"),
+        "stage_plans": balanced_stage_plans,
+        "observe_plan": observe_plan,
+        "fallback_plan": identity_plan,
+        "default_stage": "answer",
+        "failure_events": list(config.agent.failure_events),
+        "recovery_window_steps": config.agent.recovery_window_steps,
+    }
+    specs["stage_reflect_dense_global_balanced_approx_0.01"] = {
+        "mode": "routing_policy",
+        "policy": RoutingPolicy("stage", "dense", "normal"),
+        "stage_plans": balanced_stage_plans,
+        "observe_plan": observe_plan,
+        "fallback_plan": identity_plan,
+        "default_stage": "answer",
+        "failure_events": list(config.agent.failure_events),
+        "recovery_window_steps": config.agent.recovery_window_steps,
+    }
+    specs["stage_reflect_observe_global_balanced_approx_0.01"] = {
+        "mode": "routing_policy",
+        "policy": RoutingPolicy("stage", "observe", "normal"),
+        "stage_plans": balanced_stage_plans,
+        "observe_plan": observe_plan,
+        "fallback_plan": identity_plan,
+        "default_stage": "answer",
+        "failure_events": list(config.agent.failure_events),
+        "recovery_window_steps": config.agent.recovery_window_steps,
+    }
     specs["hidden_state_centroid_global_balanced_approx_0.01"] = {
         "mode": "hidden_state_centroid",
-        "stage_plans": _stage_plans(mask_bank, _global_balanced_allocation()),
-        "identity_plan": _empty_plan_like(observe_plan),
+        "stage_plans": balanced_stage_plans,
+        "identity_plan": identity_plan,
         "default_stage": "answer",
     }
     return specs
@@ -293,11 +445,26 @@ def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dic
     regular_specs = {
         method: specs[method]
         for method in methods
-        if specs[method]["mode"] != "hidden_state_centroid"
+        if specs[method]["mode"] in {"static", "stage_dynamic", "failure_redense_dynamic"}
     }
     manifest.update(_plan_manifest(regular_specs))
     for method in methods:
         spec = specs[method]
+        if spec["mode"] == "routing_policy":
+            manifest[method] = {
+                "mode": "routing_policy",
+                "policy": spec["policy"].__dict__,
+                "default_stage": spec["default_stage"],
+                "observe": _plan_summary(spec["observe_plan"]),
+                "fallback": _plan_summary(spec["fallback_plan"]),
+                "failure_events": spec["failure_events"],
+                "recovery_window_steps": spec["recovery_window_steps"],
+                "stages": {
+                    stage: _plan_summary(plan)
+                    for stage, plan in sorted(spec["stage_plans"].items())
+                },
+            }
+            continue
         if spec["mode"] != "hidden_state_centroid":
             continue
         manifest[method] = {
@@ -313,6 +480,69 @@ def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dic
             },
         }
     return manifest
+
+
+def _build_pairwise(rows: list[dict[str, Any]], methods: list[str]) -> dict[str, Any]:
+    by_method = {
+        method: {
+            row["task_id"]: row
+            for row in rows
+            if row["method"] == method
+        }
+        for method in methods
+    }
+    pairwise: dict[str, Any] = {}
+    for left, right in combinations(methods, 2):
+        common_task_ids = sorted(set(by_method[left]) & set(by_method[right]))
+        pairwise[f"{left}_vs_{right}"] = {
+            "all": _pairwise_counts(by_method[left], by_method[right], common_task_ids),
+            "failure": _pairwise_counts(
+                by_method[left],
+                by_method[right],
+                [
+                    task_id
+                    for task_id in common_task_ids
+                    if by_method[left][task_id]["failure_task"]
+                ],
+            ),
+            "non_failure": _pairwise_counts(
+                by_method[left],
+                by_method[right],
+                [
+                    task_id
+                    for task_id in common_task_ids
+                    if not by_method[left][task_id]["failure_task"]
+                ],
+            ),
+        }
+    return pairwise
+
+
+def _pairwise_counts(
+    left_rows: dict[str, dict[str, Any]],
+    right_rows: dict[str, dict[str, Any]],
+    task_ids: list[str],
+) -> dict[str, int]:
+    counts = {
+        "total": 0,
+        "both_correct": 0,
+        "left_only_correct": 0,
+        "right_only_correct": 0,
+        "both_wrong": 0,
+    }
+    for task_id in task_ids:
+        left_ok = bool(left_rows[task_id]["success"])
+        right_ok = bool(right_rows[task_id]["success"])
+        counts["total"] += 1
+        if left_ok and right_ok:
+            counts["both_correct"] += 1
+        elif left_ok:
+            counts["left_only_correct"] += 1
+        elif right_ok:
+            counts["right_only_correct"] += 1
+        else:
+            counts["both_wrong"] += 1
+    return counts
 
 
 def _evaluate_methods(
@@ -376,8 +606,9 @@ def _parse_args() -> argparse.Namespace:
         "--methods",
         nargs="+",
         choices=REAL_TOOL_METHODS,
-        default=REAL_TOOL_METHODS,
+        default=DEFAULT_REAL_TOOL_METHODS,
     )
+    parser.add_argument("--failure-only", action="store_true")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--output-prefix")
     parser.add_argument("--max-new-tokens", type=int, default=96)
@@ -389,6 +620,8 @@ def main() -> None:
     args = _parse_args()
     config = load_config(args.config)
     tasks = load_real_tool_tasks(args.tasks)
+    if args.failure_only:
+        tasks = [task for task in tasks if task.has_injected_failure]
     if args.max_tasks is not None:
         tasks = tasks[: args.max_tasks]
 
@@ -401,7 +634,13 @@ def main() -> None:
         / "real_tool_eval"
         / "real_tool_v1"
     )
-    predictions_path, metrics_path, plans_path = _artifact_paths(output_prefix)
+    (
+        predictions_path,
+        metrics_path,
+        plans_path,
+        pairwise_path,
+        failures_path,
+    ) = _artifact_paths(output_prefix)
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading mask bank: {mask_bank_path}", flush=True)
@@ -440,9 +679,19 @@ def main() -> None:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
+    pairwise_path.write_text(
+        json.dumps(_build_pairwise(rows, args.methods), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    with failures_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            if not row["success"]:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"\nWrote predictions: {predictions_path}", flush=True)
     print(f"Wrote metrics: {metrics_path}", flush=True)
     print(f"Wrote plans: {plans_path}", flush=True)
+    print(f"Wrote pairwise: {pairwise_path}", flush=True)
+    print(f"Wrote failures: {failures_path}", flush=True)
 
 
 if __name__ == "__main__":

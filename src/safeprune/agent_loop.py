@@ -19,11 +19,23 @@ class RouteOutcome:
     active_ffn_ratio: float
     plan: dict[str, Any] | None = None
     router_prefill_cost: float = 0.0
+    selected_plan_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 GenerateFn = Callable[[list[dict[str, str]]], str]
 RouteFn = Callable[[str, str, list[dict[str, str]]], RouteOutcome]
+
+REFLECT_EVENTS = {
+    "format_error",
+    "schema_error",
+    "invalid_argument",
+    "unknown_tool",
+    "timeout",
+    "empty_observation",
+    "tool_error",
+    "premature_final",
+}
 
 
 def build_tool_system_prompt(registry: ToolRegistry) -> str:
@@ -74,9 +86,12 @@ def run_real_tool_episode(
             "stage": stage,
             "event_before": last_event,
             "selected_stage": route.selected_stage,
+            "selected_plan_name": route.selected_plan_name or route.selected_stage,
             "reason": route.reason,
             "active_ffn_ratio": active_ratio,
             "router_prefill_cost": route.router_prefill_cost,
+            "fallback_remaining_before": route.metadata.get("fallback_remaining_before"),
+            "fallback_remaining_after": route.metadata.get("fallback_remaining_after"),
             "raw_output": raw_output,
             "route_metadata": route.metadata,
         }
@@ -98,6 +113,15 @@ def run_real_tool_episode(
 
         if action.type == "final":
             final_answer = action.answer
+            if task.requires_tool_success and not env.has_successful_tool_observation:
+                observation = _premature_final_observation()
+                observations.append(observation)
+                routing_trace.append({**trace_row, "event_after": "premature_final"})
+                messages.append({"role": "assistant", "content": raw_output})
+                messages.append({"role": "user", "content": _observation_prompt(observation)})
+                last_event = "premature_final"
+                continue
+
             success = env.check_success(final_answer)
             routing_trace.append({**trace_row, "event_after": "final"})
             return _episode_payload(
@@ -158,15 +182,7 @@ def run_real_tool_episode(
 def infer_next_stage(last_event: str, observations: list[dict[str, Any]]) -> str:
     if last_event == "start":
         return "plan"
-    if last_event in {
-        "format_error",
-        "schema_error",
-        "invalid_argument",
-        "unknown_tool",
-        "timeout",
-        "empty_observation",
-        "tool_error",
-    }:
+    if last_event in REFLECT_EVENTS:
         return "reflect"
     if observations and observations[-1].get("ok"):
         return "answer"
@@ -188,6 +204,20 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     schema_errors = sum(row["schema_error_count"] for row in rows)
     parse_errors = sum(row["parse_error_count"] for row in rows)
     dense_fallback_steps = sum(row["dense_fallback_step_count"] for row in rows)
+    dense_fallback_tasks = sum(1 for row in rows if row["dense_fallback_step_count"] > 0)
+    premature_final_tasks = sum(1 for row in rows if row["premature_final_count"] > 0)
+    reflect_rows = [row for row in rows if row["entered_reflect"]]
+    reflect_success_rows = [row for row in reflect_rows if row["success"]]
+    reflect_expected = sum(row["reflect_expected_count"] for row in rows)
+    reflect_actual = sum(row["reflect_actual_count"] for row in rows)
+    successful_observation_tasks = sum(
+        1 for row in rows if row["has_successful_tool_observation"]
+    )
+    recovery_steps = [
+        row["recovery_steps"]
+        for row in reflect_success_rows
+        if row.get("recovery_steps") is not None
+    ]
     collapse = sum(1 for row in rows if row["collapse"])
 
     by_tool: dict[str, Counter] = {}
@@ -233,7 +263,25 @@ def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             inclusive_cost / successes if successes else None
         ),
         "dense_fallback_step_count": dense_fallback_steps,
+        "dense_fallback_task_count": dense_fallback_tasks,
         "dense_fallback_rate": dense_fallback_steps / generation_steps if generation_steps else 0.0,
+        "fallback_trigger_rate": dense_fallback_tasks / total if total else 0.0,
+        "fallback_step_ratio": dense_fallback_steps / generation_steps if generation_steps else 0.0,
+        "premature_final_task_count": premature_final_tasks,
+        "premature_final_rate": premature_final_tasks / total if total else 0.0,
+        "reflect_expected_count": reflect_expected,
+        "reflect_actual_count": reflect_actual,
+        "reflect_route_accuracy": reflect_actual / reflect_expected if reflect_expected else None,
+        "reflect_entry_rate": len(reflect_rows) / total if total else 0.0,
+        "reflect_success_rate": (
+            len(reflect_success_rows) / len(reflect_rows) if reflect_rows else None
+        ),
+        "recovery_steps_mean": _mean(recovery_steps),
+        "recovery_steps_p95": _percentile(recovery_steps, 0.95),
+        "successful_tool_observation_task_count": successful_observation_tasks,
+        "successful_tool_observation_rate": (
+            successful_observation_tasks / total if total else 0.0
+        ),
         "by_tool": {
             tool: {
                 "total": counts["total"],
@@ -251,6 +299,20 @@ def _success_rate(rows: list[dict[str, Any]]) -> float | None:
     return sum(1 for row in rows if row["success"]) / len(rows)
 
 
+def _mean(values: list[int]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _percentile(values: list[int], quantile: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int((len(ordered) - 1) * quantile))
+    return ordered[index]
+
+
 def _parse_error_observation(parsed: ParseResult) -> dict[str, Any]:
     return {
         "tool": None,
@@ -258,6 +320,18 @@ def _parse_error_observation(parsed: ParseResult) -> dict[str, Any]:
         "output": {"error": parsed.error or parsed.event},
         "event": parsed.event,
         "retryable": parsed.retryable,
+    }
+
+
+def _premature_final_observation() -> dict[str, Any]:
+    return {
+        "tool": "runner_guard",
+        "ok": False,
+        "output": {
+            "error": "A successful tool execution is required before final answer.",
+        },
+        "event": "premature_final",
+        "retryable": True,
     }
 
 
@@ -293,6 +367,32 @@ def _episode_payload(
     dense_fallback_steps = sum(
         1 for row in routing_trace if row.get("selected_stage") == "dense_fallback"
     )
+    premature_final_count = sum(
+        1 for observation in observations if observation["event"] == "premature_final"
+    )
+    reflect_expected_count = sum(
+        1 for row in routing_trace if row.get("event_before") in REFLECT_EVENTS
+    )
+    reflect_actual_count = sum(
+        1
+        for row in routing_trace
+        if row.get("event_before") in REFLECT_EVENTS and row.get("stage") == "reflect"
+    )
+    reflect_step_ids = [
+        int(row["step_id"]) for row in routing_trace if row.get("stage") == "reflect"
+    ]
+    entered_reflect = bool(reflect_step_ids)
+    recovery_steps = None
+    if success and entered_reflect and routing_trace:
+        recovery_steps = int(routing_trace[-1]["step_id"]) - min(reflect_step_ids) + 1
+    successful_tool_observations = [
+        observation
+        for observation in observations
+        if observation.get("ok")
+        and observation.get("event") in {"ok", "success"}
+        and observation.get("output") not in (None, {})
+        and observation.get("counts_as_successful_observation", True)
+    ]
     return {
         "task_id": task.task_id,
         "tool": task.tool,
@@ -320,4 +420,11 @@ def _episode_payload(
         "parse_error_count": parse_errors,
         "schema_error_count": schema_errors,
         "dense_fallback_step_count": dense_fallback_steps,
+        "premature_final_count": premature_final_count,
+        "reflect_expected_count": reflect_expected_count,
+        "reflect_actual_count": reflect_actual_count,
+        "entered_reflect": entered_reflect,
+        "recovery_steps": recovery_steps,
+        "successful_tool_observation_count": len(successful_tool_observations),
+        "has_successful_tool_observation": bool(successful_tool_observations),
     }

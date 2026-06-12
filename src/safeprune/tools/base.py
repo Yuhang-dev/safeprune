@@ -11,6 +11,7 @@ class ToolResult:
     output: dict[str, Any]
     event: str = "ok"
     retryable: bool = False
+    counts_as_successful_observation: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -18,6 +19,9 @@ class ToolResult:
             "output": self.output,
             "event": self.event,
             "retryable": self.retryable,
+            "counts_as_successful_observation": (
+                self.ok and self.counts_as_successful_observation
+            ),
         }
 
 

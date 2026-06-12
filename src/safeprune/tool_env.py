@@ -28,6 +28,7 @@ class RealToolTask:
     expected_tool: str
     expected_arguments: dict[str, Any]
     max_steps: int = 6
+    requires_tool_success: bool = True
     fault_schedule: list[FaultSpec] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -67,10 +68,20 @@ class LocalToolEnvironment:
         )
         return result
 
+    @property
+    def has_successful_tool_observation(self) -> bool:
+        return any(
+            bool(result.get("ok"))
+            and result.get("event") in {"ok", "success"}
+            and result.get("output") not in (None, {})
+            and bool(result.get("counts_as_successful_observation", True))
+            for result in self.tool_results
+        )
+
     def check_success(self, final_answer: str | None) -> bool:
         if final_answer is None:
             return False
-        if not any(result["ok"] for result in self.tool_results):
+        if self.task.requires_tool_success and not self.has_successful_tool_observation:
             return False
         return strict_agent_answer_correct(
             self.task.tool,
@@ -122,6 +133,9 @@ def validate_real_tool_task(raw: dict[str, Any], line_number: int | None = None)
     max_steps = int(raw.get("max_steps", 6))
     if max_steps < 1:
         raise ValueError(f"{prefix}max_steps must be positive")
+    requires_tool_success = raw.get("requires_tool_success", True)
+    if not isinstance(requires_tool_success, bool):
+        raise ValueError(f"{prefix}requires_tool_success must be a boolean")
 
     return RealToolTask(
         task_id=raw["task_id"],
@@ -131,6 +145,7 @@ def validate_real_tool_task(raw: dict[str, Any], line_number: int | None = None)
         expected_tool=raw["expected_tool"],
         expected_arguments=raw["expected_arguments"],
         max_steps=max_steps,
+        requires_tool_success=requires_tool_success,
         fault_schedule=fault_schedule,
         metadata=metadata,
     )

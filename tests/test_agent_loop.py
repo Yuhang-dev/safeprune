@@ -72,6 +72,55 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(row["final_answer"], "5")
         self.assertEqual(row["schema_error_count"], 0)
 
+    def test_premature_final_is_rejected_and_enters_reflect(self):
+        row = run_real_tool_episode(
+            task=_task(),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=_SequenceGenerator(
+                [
+                    '{"type":"final","answer":"5"}',
+                    '{"type":"tool_call","name":"calculator","arguments":{"expression":"2 + 3"}}',
+                    '{"type":"final","answer":"5"}',
+                ]
+            ),
+        )
+
+        self.assertTrue(row["success"])
+        self.assertEqual(row["premature_final_count"], 1)
+        self.assertEqual(row["events"][0], "premature_final")
+        self.assertEqual(row["routing_trace"][1]["event_before"], "premature_final")
+        self.assertEqual(row["routing_trace"][1]["stage"], "reflect")
+
+    def test_final_without_tool_is_allowed_when_task_does_not_require_tool_success(self):
+        row = run_real_tool_episode(
+            task=_task(requires_tool_success=False),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=_SequenceGenerator(['{"type":"final","answer":"5"}']),
+        )
+
+        self.assertTrue(row["success"])
+        self.assertEqual(row["generation_steps"], 1)
+        self.assertEqual(row["premature_final_count"], 0)
+
+    def test_repeated_premature_final_exits_at_max_steps(self):
+        row = run_real_tool_episode(
+            task=_task(max_steps=2),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=_SequenceGenerator(
+                [
+                    '{"type":"final","answer":"5"}',
+                    '{"type":"final","answer":"5"}',
+                ]
+            ),
+        )
+
+        self.assertFalse(row["success"])
+        self.assertEqual(row["terminal_event"], "max_steps_exceeded")
+        self.assertEqual(row["premature_final_count"], 2)
+
     def test_schema_error_then_retry(self):
         row = run_real_tool_episode(
             task=_task(),
@@ -155,6 +204,9 @@ class AgentLoopTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["task_success_rate"], 0.5)
         self.assertIsNotNone(metrics["cost_per_success"])
         self.assertLess(metrics["schema_validity_rate"], 1.0)
+        self.assertIn("premature_final_rate", metrics)
+        self.assertIn("reflect_route_accuracy", metrics)
+        self.assertIn("fallback_step_ratio", metrics)
 
 
 if __name__ == "__main__":

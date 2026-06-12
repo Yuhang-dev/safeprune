@@ -57,10 +57,20 @@ class ToolEnvironmentTests(unittest.TestCase):
         task = validate_real_tool_task(_task())
         env = LocalToolEnvironment(task, default_tool_registry())
         self.assertFalse(env.check_success("5"))
+        self.assertFalse(env.has_successful_tool_observation)
 
         env.execute("calculator", {"expression": "2 + 3"})
+        self.assertTrue(env.has_successful_tool_observation)
         self.assertTrue(env.check_success("5"))
         self.assertFalse(env.check_success("6"))
+
+    def test_requires_tool_success_defaults_true_but_can_be_disabled(self):
+        task = validate_real_tool_task(_task())
+        self.assertTrue(task.requires_tool_success)
+
+        no_tool_required = validate_real_tool_task(_task(requires_tool_success=False))
+        env = LocalToolEnvironment(no_tool_required, default_tool_registry())
+        self.assertTrue(env.check_success("5"))
 
 
 if __name__ == "__main__":
