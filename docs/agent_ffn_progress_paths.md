@@ -151,6 +151,7 @@ P2 pruning substrate v2 已接入 Real Tool runner。当前结论：
 ```text
 controlled-task prompt PPL sanity 显示 3% / 5% / 10% / 20% 均未 collapse。
 Real Tool 100 smoke 显示 3% 和 10% 通过，5% 是异常档位。
+20% pressure smoke 已失败，主要表现为 unit_convert 0/33 和 schema_validity_rate 0.5247。
 ```
 
 P2 Real Tool 100 smoke：
@@ -171,7 +172,7 @@ P2 Real Tool 100 smoke：
 先用 scripts/audit_substrate_plans.py 分析 5% layer allocation、plan nesting、
 overlap、重复/越界 index、bias compensation norm 和 failure trace。
 10% stage-reflect-dense 是当前主候选，3% 是安全对照。
-20% 先作为 pressure smoke；通过后才进入 1000 主表。
+20% 不进入 1000 主表。
 ```
 
 ## 1. 已完成路径

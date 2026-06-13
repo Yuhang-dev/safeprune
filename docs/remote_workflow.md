@@ -303,8 +303,7 @@ python scripts/audit_substrate_plans.py \
   --output-md outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.md
 ```
 
-然后单独跑 20% pressure smoke。20% 不直接进正式 1000，先看是否保持
-non-failure、failure recovery 和 schema 稳定：
+20% pressure smoke 历史命令如下；该实验已经完成且失败，不需要重跑：
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -320,8 +319,25 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p20_smoke_100
 ```
 
-如果确认 5% 是坏 allocation 而不是 runner bug，且 20% smoke 未通过主线门槛，
-下一步以 10% 为主候选跑 1000，3% 作为安全对照：
+20% pressure smoke 已完成，未通过主线门槛：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 | 1.0000 |
+| substrate_flap_0p20_stage_reflect_dense | 60/100 | 9/20 | 51/80 | 6.5194 | 0.6024 | 0.5247 |
+
+20% 主要失败在 schema/tool protocol：
+
+```text
+unit_convert: 0/33
+lookup: 26/33
+calculator: 34/34
+schema_error: 202
+premature_final_rate: 0.67
+```
+
+评估代码审查没有发现会误判 20% 的 runner / parser / metrics bug。20% 不进入
+1000 主表。下一步以 10% 为主候选跑 1000：
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -329,28 +345,18 @@ python -u scripts/evaluate_real_tool_loop.py \
   --tasks data/agent/real_tool_tasks_v1.jsonl \
   --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
   --local-files-only \
-  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
-  --substrate-name flap_0p03 \
   --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
   --substrate-name flap_0p10 \
   --methods \
     dense \
-    substrate_flap_0p03_stage_reflect_dense \
+    identity_hook \
     substrate_flap_0p10_stage_reflect_dense \
     substrate_flap_0p10_observe_failure_redense \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_1000
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
 ```
 
-如果 `0p20` smoke 达到：
-
-```text
-overall >= 95/100
-failure >= 18/20
-non-failure >= 78/80
-generation_collapse_rate = 0
-```
-
-则把 `substrate_flap_0p20_stage_reflect_dense` 加入 1000 主表；否则只作为压力测试记录。
+不要把 `0p05` 或 `0p20` 加入这轮 1000。后续需要 nested budget ladder 和
+Agent-aware calibration 后再重建这些档位。
 
 ### Historical v1 commands
 

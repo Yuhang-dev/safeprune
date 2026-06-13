@@ -29,7 +29,7 @@ cost per successful task = total active FFN cost / successful tasks
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
 | Hidden-state centroid router | `[IN PROGRESS]` | smoke 已证明 event hybrid 能追平 stage-reflect-dense；1000 条正式结果待冻结。 |
 | FLAP-style substrate v2 | `[IN PROGRESS]` | 已构建 activation/Wanda/FLAP plans，并完成 controlled prompt PPL sanity。 |
-| Budget ladder | `[IN PROGRESS]` | 3% / 10% Real Tool smoke 通过；5% 出现 allocation anomaly，不能直接进 1000。 |
+| Budget ladder | `[IN PROGRESS]` | 10% Real Tool smoke 通过并进入 1000；5% 是 allocation anomaly，20% pressure smoke 失败。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -141,6 +141,29 @@ P2 Real Tool 100 smoke 最新结果：
 需要优先检查 layer allocation 和 failure trace。
 10% 下 stage-reflect-dense 与 observe-failure-redense 同为 99/100，
 但 stage-reflect-dense fallback step ratio 更低，因此优先作为 10% 主方法。
+```
+
+P2 plan audit 和 20% pressure smoke 结论：
+
+```text
+audit 显示 5%/10%/20% plan 文件没有 duplicate/out-of-range channel index，
+bias compensation 和 layer scale placeholder 也都存在。
+异常来自当前独立 budget search 的非嵌套 allocation：
+flap_0p05_vs_flap_0p10 中，5% 有 9353 个 channel 不在 10% 里。
+
+20% pressure smoke 失败：
+substrate_flap_0p20_stage_reflect_dense = 60/100
+failure subset = 9/20
+non-failure = 51/80
+schema_validity_rate = 0.5247
+unit_convert = 0/33
+```
+
+评估代码审查结论：
+
+```text
+未发现会把 20% 误判为失败的 runner / parser / metrics bug。
+20% 失败是 tool protocol / schema 控制能力被破坏，不进入 1000 主表。
 ```
 
 ## 4. 实验顺序
@@ -271,7 +294,7 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
 ```
 
-10. `[NEXT]` 先分析 5% anomaly，不跑 5% 1000：
+10. `[DONE]` 分析 5% anomaly，不跑 5% 1000：
 
 ```text
 用 scripts/audit_substrate_plans.py 检查 budget_plan_0p05.json 的 layer allocation、
@@ -280,9 +303,10 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 确认是否某些关键层被 5% allocation 误剪，或 bias compensation 在某些层引入过强偏置。
 ```
 
-11. `[NEXT]` 单独跑 20% pressure smoke；如果达到 `overall >= 95/100`、
-`failure >= 18/20`、`non-failure >= 78/80` 且 collapse 为 0，再加入 1000 主表。
-12. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000；3% 可作为安全对照。
+11. `[DONE]` 单独跑 20% pressure smoke；结果未通过，不进入 1000 主表。
+12. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000，只保留必要方法：
+`dense`、`identity_hook`、`substrate_flap_0p10_stage_reflect_dense`、
+`substrate_flap_0p10_observe_failure_redense`。
 13. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照

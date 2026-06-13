@@ -253,7 +253,8 @@ python scripts/audit_substrate_plans.py \
   --output-md outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.md
 ```
 
-Run 20% only as a pressure smoke before considering it for the 1000-task table:
+Historical 20% pressure smoke command. This run already failed and should not be
+added to the 1000-task table:
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -267,6 +268,31 @@ python -u scripts/evaluate_real_tool_loop.py \
     dense \
     substrate_flap_0p20_stage_reflect_dense \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p20_smoke_100
+```
+
+20% pressure smoke did not pass:
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
+| substrate flap 20% stage-reflect-dense | 60/100 | 9/20 | 51/80 | 6.5194 | 0.5247 |
+
+Therefore the next 1000-task run should keep only the 10% substrate candidate:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    identity_hook \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
 ```
 
 Run local unit tests:

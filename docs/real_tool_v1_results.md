@@ -278,7 +278,8 @@ Real Tool substrate smoke：
 10% 是当前主候选档位，已经在 Real Tool smoke 中接近 dense，并降低 cost_per_success。
 5% 是 allocation anomaly：PPL 好，但 Agent loop 明显退化，不能直接进 1000。
 10% 下 stage-reflect-dense 优于 observe-failure-redense 的成本形态，因为 fallback step 更少。
-20% 只能先作为 pressure smoke；通过 smoke 后才可进入正式 1000 主表。
+20% pressure smoke 已失败：60/100、failure 9/20、unit_convert 0/33、
+schema_validity_rate 0.5247；不进入正式 1000 主表。
 ```
 
 这不改变 Real Tool v1 的冻结结论；它说明下一阶段论文结果应围绕

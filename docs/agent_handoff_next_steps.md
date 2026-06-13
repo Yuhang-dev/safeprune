@@ -116,14 +116,61 @@ failure subset 19/20，cost_per_success 低于 dense。
 因此优先作为 P2 主方法。
 ```
 
-当前下一步：
+P2 plan audit 和 20% pressure smoke 也已完成。
+
+Audit 结论：
 
 ```text
-1. 用 scripts/audit_substrate_plans.py 检查 3/5/10/20% plan overlap、nesting、
-   per-layer allocation 和 bias compensation norm。
-2. 跑 20% Real Tool 100 pressure smoke；只有通过 smoke 才考虑进入 1000。
-3. 若 5% 确认是坏 allocation 而不是 runner bug，跑 10% 1000，3% 作为安全对照。
-4. P1 hidden-state 1000 跑完后冻结到文档。
+plan 文件本身没有明显损坏：
+  duplicate idx = 0
+  out-of-range idx = 0
+  bias layers = 36
+  scale layers = 36
+
+真正问题是 allocator 非嵌套：
+  flap_0p05_vs_flap_0p10: 5% 有 9353 个 channel 不在 10% 里
+  flap_0p03_vs_flap_0p10: 3% 有 4400 个 channel 不在 10% 里
+
+5% 异常不是 runner bug，也不是 plan loader 基础 bug；
+它是当前独立 budget search 找到了一组坏 allocation。
+```
+
+20% pressure smoke 结果：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 | 1.0000 |
+| flap 20% stage-reflect-dense | 60/100 | 9/20 | 51/80 | 6.5194 | 0.6024 | 0.5247 |
+
+20% 失败形态：
+
+```text
+unit_convert: 0/33
+lookup: 26/33
+calculator: 34/34
+schema_error: 202
+premature_final_rate: 0.67
+dense vs 20% pairwise: 20%_only_correct = 0
+```
+
+评估代码审查结论：
+
+```text
+未发现会把 20% 误判为失败的 runner / parser / metrics bug。
+tool protocol 严格拒绝 {"type":"unit_convert", ...} 是正确行为；
+正式协议只接受 {"type":"tool_call","name":"unit_convert","arguments":{...}}。
+全量单测通过：76 tests OK, 3 skipped。
+```
+
+当前下一步固定为：
+
+```text
+1. 不跑 5% 1000。
+2. 不跑 20% 1000。
+3. 跑 10% Real Tool 1000 主线。
+4. 1000 方法只保留 dense、identity_hook、substrate_flap_0p10_stage_reflect_dense、
+   substrate_flap_0p10_observe_failure_redense。
+5. 后续 P2b 再做 nested budget ladder + agent-aware calibration，修 5%/20%。
 ```
 
 ## 1. 当前阶段
@@ -390,6 +437,7 @@ scripts/evaluate_real_tool_loop.py:
 
 ```bash
 cd /root/autodl-tmp/safeprune/code/Prune
+git pull origin main
 source /root/autodl-tmp/safeprune/.venv_agent/bin/activate
 
 export PYTHONUNBUFFERED=1
@@ -401,58 +449,103 @@ export HF_HUB_DISABLE_XET=1
 unset TRANSFORMERS_CACHE
 ```
 
-real tool smoke：
+确认正式 1000 任务存在；如果没有再生成：
 
 ```bash
-python -u scripts/evaluate_real_tool_loop.py \
-  --config configs/agent_qwen2_5_3b_4090.yaml \
-  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
-  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
-  --local-files-only \
-  --methods \
-    dense \
-    identity_hook \
-    global_balanced_observe_approx_0.01 \
-    stage_global_balanced_approx_0.01 \
-    failure_redense_global_balanced_approx_0.01 \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_smoke_100
-```
-
-如果 smoke 通过，再生成和跑 1000：
-
-```bash
+test -f data/agent/real_tool_tasks_v1.jsonl || \
 python scripts/prepare_real_tool_tasks.py \
   --output data/agent/real_tool_tasks_v1.jsonl \
   --count 1000 \
   --failure-count 200
+```
 
+当前主命令：跑 10% Real Tool 1000。不要加 5%，不要加 20%。
+
+```bash
 python -u scripts/evaluate_real_tool_loop.py \
   --config configs/agent_qwen2_5_3b_4090.yaml \
   --tasks data/agent/real_tool_tasks_v1.jsonl \
   --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
   --local-files-only \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_1000
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    identity_hook \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
 ```
 
-## 6. Smoke 判断标准
+跑完后打印主指标：
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+p = Path("outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000_metrics.json")
+metrics = json.loads(p.read_text())
+keys = [
+    "correct", "total", "failure_task_correct", "failure_task_total",
+    "non_failure_task_correct", "non_failure_task_total",
+    "cost_per_success", "fallback_step_ratio", "schema_validity_rate",
+    "premature_final_rate", "generation_collapse_rate",
+]
+for method, row in metrics.items():
+    print(method)
+    for key in keys:
+        print(f"  {key}: {row.get(key)}")
+PY
+```
+
+可选：如果需要快速确认失败类型，再看 failures：
+
+```bash
+python - <<'PY'
+import json
+from collections import Counter, defaultdict
+from pathlib import Path
+
+p = Path("outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000_failures.jsonl")
+by_method_tool = defaultdict(Counter)
+events = defaultdict(Counter)
+for line in p.read_text().splitlines():
+    row = json.loads(line)
+    by_method_tool[row["method"]][row["tool"]] += 1
+    events[row["method"]].update(row.get("events", []))
+print("failed by tool")
+for method, counts in sorted(by_method_tool.items()):
+    print(method, dict(counts))
+print("events")
+for method, counts in sorted(events.items()):
+    print(method, dict(counts.most_common(8)))
+PY
+```
+
+## 6. 10% 1000 判断标准
 
 先看：
 
 ```text
-dense 与 identity_hook 是否完全或近似一致
-dense task_success_rate 是否 >= 0.90
-dense schema_validity_rate 是否 >= 0.95
+dense 与 identity_hook 是否逐任务一致或近似一致
+dense / identity_hook 是否维持 Real Tool v1 水平
+substrate_flap_0p10_stage_reflect_dense 是否接近或超过 100-smoke 的趋势
+substrate_flap_0p10_observe_failure_redense 是否作为窗口式 redense 成本对照稳定
 collapse_rate 是否为 0
 ```
 
 再看：
 
 ```text
-stage_global_balanced_approx_0.01 是否优于 global_balanced_observe_approx_0.01
-failure_redense_global_balanced_approx_0.01 是否提升 failure_task_success_rate
+10% stage-reflect-dense 是否保持 non-failure 接近 dense
+10% stage-reflect-dense 是否在 failure subset 明显优于无 recovery sparse 路径
+10% stage-reflect-dense 是否比 10% observe-failure-redense 使用更少 fallback step
+cost_per_success 是否低于 dense 或至少明显优于 1% Real Tool v1 主线
 ```
 
-若 dense 自身低于 0.90，优先调 prompt/protocol，不要直接解释成 pruning 失败。
+若 dense / identity_hook 在 1000 中明显低于已冻结 Real Tool v1 水平，先检查任务文件、
+prompt/protocol 和远端环境，不要直接解释成 pruning 失败。
 
 ## 7. 不要做
 
@@ -466,14 +559,17 @@ failure_redense_global_balanced_approx_0.01 是否提升 failure_task_success_ra
 不要把远端输出 vendoring 到 src/。
 不要跳过 dense/identity 对齐检查。
 不要在 real tool smoke 不稳定时加入复杂工具或 stateful DB。
+不要把 5% 或 20% 加入当前 10% 1000 主表。
 ```
 
 ## 8. 新对话建议首条指令
 
 ```text
 读取 docs/agent_handoff_next_steps.md，
-然后从 docs/real_tool_v1_results.md 继续：
-不要补同配置 1000；
-优先跑 hidden_state_centroid_global_balanced_approx_0.01 对照，
-再规划 3% / 5% / 10% global FFN budget ladder。
+然后继续 P2：
+5% allocation anomaly 已完成 audit；
+20% pressure smoke 已失败；
+现在只跑 10% Real Tool 1000，方法为 dense、identity_hook、
+substrate_flap_0p10_stage_reflect_dense、
+substrate_flap_0p10_observe_failure_redense。
 ```
