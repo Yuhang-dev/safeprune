@@ -357,6 +357,8 @@ So v1.1 hardens only the prompt and error feedback:
 Do not put tool names in type.
 The top-level type must be exactly tool_call or final.
 If a previous JSON object was rejected, fix the shape instead of repeating it.
+For tool-name-as-type errors, return an expected_example with the same arguments
+wrapped as {"type":"tool_call","name":"<tool>","arguments":{...}}.
 ```
 
 The parser remains strict; no string-to-number coercion, enum relaxation, or

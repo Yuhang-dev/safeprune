@@ -158,6 +158,37 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(row["schema_error_count"], 1)
         self.assertEqual(row["routing_trace"][1]["stage"], "reflect")
 
+    def test_tool_name_as_type_feedback_includes_expected_example(self):
+        row = run_real_tool_episode(
+            task=_task(
+                tool="unit_convert",
+                expected_tool="unit_convert",
+                expected_arguments={"value": 2, "from_unit": "m", "to_unit": "cm"},
+                expected_answer="200",
+            ),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=_SequenceGenerator(
+                [
+                    '{"type":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}',
+                    '{"type":"tool_call","name":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}',
+                    '{"type":"final","answer":"200"}',
+                ]
+            ),
+        )
+
+        self.assertTrue(row["success"])
+        observation = row["observations"][0]
+        self.assertEqual(observation["event"], "schema_error")
+        self.assertEqual(
+            observation["output"]["expected_example"],
+            {
+                "type": "tool_call",
+                "name": "unit_convert",
+                "arguments": {"value": 2, "from_unit": "m", "to_unit": "cm"},
+            },
+        )
+
     def test_timeout_triggers_dense_fallback_on_next_step(self):
         seen_generation_types = []
 

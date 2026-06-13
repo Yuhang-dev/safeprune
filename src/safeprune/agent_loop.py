@@ -494,10 +494,13 @@ def _percentile(values: list[int], quantile: float) -> int | None:
 
 
 def _parse_error_observation(parsed: ParseResult) -> dict[str, Any]:
+    output = {"error": parsed.error or parsed.event}
+    if parsed.details:
+        output.update(parsed.details)
     return {
         "tool": None,
         "ok": False,
-        "output": {"error": parsed.error or parsed.event},
+        "output": output,
         "event": parsed.event,
         "retryable": parsed.retryable,
     }

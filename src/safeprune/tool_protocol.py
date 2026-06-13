@@ -23,6 +23,7 @@ class ParseResult:
     event: str = "ok"
     error: str | None = None
     retryable: bool = True
+    details: dict[str, Any] | None = None
 
 
 def parse_agent_output(text: str) -> ParseResult:
@@ -88,14 +89,29 @@ def parse_agent_output(text: str) -> ParseResult:
         )
 
     if isinstance(kind, str):
+        arguments = payload.get("arguments")
+        expected_example = {
+            "type": "tool_call",
+            "name": kind,
+            "arguments": arguments if isinstance(arguments, dict) else {},
+        }
         return ParseResult(
             ok=False,
             event="schema_error",
             error=(
                 "type must be tool_call or final; do not put a tool name in type. "
                 f"If you need the {kind} tool, use "
-                f'{{"type":"tool_call","name":"{kind}","arguments":{{...}}}}'
+                f"{json.dumps(expected_example, ensure_ascii=False, separators=(',', ':'))}"
             ),
+            details={
+                "schema_hint": (
+                    "Invalid tool-call wrapper. Top-level field 'type' must be exactly "
+                    "'tool_call'. Put the tool name in the top-level 'name' field."
+                ),
+                "expected_example": expected_example,
+                "received_type": kind,
+                "received_arguments": arguments if isinstance(arguments, dict) else None,
+            },
         )
     return ParseResult(ok=False, event="schema_error", error="type must be tool_call or final")
 

@@ -54,6 +54,14 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertEqual(parsed.event, "schema_error")
         self.assertIn("do not put a tool name in type", parsed.error)
         self.assertIn('"name":"unit_convert"', parsed.error)
+        self.assertEqual(
+            parsed.details["expected_example"],
+            {
+                "type": "tool_call",
+                "name": "unit_convert",
+                "arguments": {"value": 2, "from_unit": "m", "to_unit": "cm"},
+            },
+        )
 
 
 if __name__ == "__main__":
