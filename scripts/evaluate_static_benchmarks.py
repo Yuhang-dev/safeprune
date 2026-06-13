@@ -116,6 +116,7 @@ def main() -> None:
     )
     parser.add_argument("--max-samples", type=int, default=256)
     parser.add_argument("--max-length", type=int)
+    parser.add_argument("--log-every", type=int, default=32)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--benchmark-version", default="p3_static_v1")
     parser.add_argument("--calibration-path", action="append", default=[])
@@ -132,32 +133,45 @@ def main() -> None:
     )
     max_length = args.max_length or config.data.max_length
     specs = _parse_plan_specs(args)
+    benchmark_data: dict[str, Any] = {}
+    if "wikitext2" in args.benchmarks:
+        print("Loading benchmark data: wikitext2", flush=True)
+        benchmark_data["wikitext2"] = _load_wikitext_texts(args.max_samples)
+    for benchmark in ["piqa", "hellaswag", "arc_easy"]:
+        if benchmark in args.benchmarks:
+            print(f"Loading benchmark data: {benchmark}", flush=True)
+            benchmark_data[benchmark] = _load_mc_examples(benchmark, args.max_samples)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     handle = attach_qwen_switchable_mlp_masks(model)
     results = []
     try:
         for spec in specs:
+            print(f"\nPLAN {spec['name']}", flush=True)
             handle.set_plan(spec["plan"] if spec["plan"] is not None else {"layers": []})
             model.eval()
             benchmarks: dict[str, Any] = {}
             if "wikitext2" in args.benchmarks:
-                texts = _load_wikitext_texts(args.max_samples)
+                print(f"Running {spec['name']} / wikitext2", flush=True)
                 benchmarks["wikitext2"] = evaluate_text_ppl(
                     model=model,
                     tokenizer=tokenizer,
-                    texts=texts,
+                    texts=benchmark_data["wikitext2"],
                     max_length=max_length,
+                    log_prefix=f"{spec['name']} wikitext2",
+                    log_every=args.log_every,
                 )
             for benchmark in ["piqa", "hellaswag", "arc_easy"]:
                 if benchmark not in args.benchmarks:
                     continue
-                examples = _load_mc_examples(benchmark, args.max_samples)
+                print(f"Running {spec['name']} / {benchmark}", flush=True)
                 benchmarks[benchmark] = evaluate_multiple_choice_examples(
                     model=model,
                     tokenizer=tokenizer,
-                    examples=examples,
+                    examples=benchmark_data[benchmark],
                     max_length=max_length,
+                    log_prefix=f"{spec['name']} {benchmark}",
+                    log_every=args.log_every,
                 )
 
             device = str(next(model.parameters()).device)
@@ -187,6 +201,7 @@ def main() -> None:
             }
             results.append(row)
             dump_json(row, output_dir / f"{spec['name']}_benchmark.json")
+            print(f"Wrote {spec['name']}_benchmark.json", flush=True)
     finally:
         handle.remove()
 

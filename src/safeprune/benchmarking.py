@@ -140,9 +140,11 @@ def evaluate_multiple_choice_examples(
     tokenizer,
     examples: list[MultipleChoiceExample],
     max_length: int,
+    log_prefix: str | None = None,
+    log_every: int = 0,
 ) -> dict[str, Any]:
     correct = 0
-    for example in examples:
+    for idx, example in enumerate(examples, start=1):
         scores = [
             score_continuation_mean_nll(
                 model=model,
@@ -155,6 +157,8 @@ def evaluate_multiple_choice_examples(
         ]
         prediction = min(range(len(scores)), key=lambda idx: scores[idx])
         correct += int(prediction == example.label)
+        if log_prefix and log_every > 0 and idx % log_every == 0:
+            print(f"{log_prefix}: {idx}/{len(examples)}", flush=True)
     total = len(examples)
     return {
         "metric": "accuracy",
@@ -171,6 +175,8 @@ def evaluate_text_ppl(
     tokenizer,
     texts: list[str],
     max_length: int,
+    log_prefix: str | None = None,
+    log_every: int = 0,
 ) -> dict[str, Any]:
     import torch
 
@@ -179,7 +185,7 @@ def evaluate_text_ppl(
     device = next(model.parameters()).device
     model.eval()
     with torch.no_grad():
-        for text in texts:
+        for idx, text in enumerate(texts, start=1):
             encoded = tokenizer(
                 text,
                 return_tensors="pt",
@@ -193,6 +199,8 @@ def evaluate_text_ppl(
             tokens = int(input_ids.numel())
             total_loss += float(outputs.loss.detach().float().cpu()) * tokens
             total_tokens += tokens
+            if log_prefix and log_every > 0 and idx % log_every == 0:
+                print(f"{log_prefix}: {idx}/{len(texts)}", flush=True)
     loss = total_loss / total_tokens if total_tokens else float("nan")
     return {
         "metric": "perplexity",
