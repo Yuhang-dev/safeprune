@@ -384,6 +384,52 @@ observations. For lookup, the model is told to answer exactly the observed
 `owner_N` value and not only the numeric project id. The strict parser and
 strict evaluator remain unchanged.
 
+### Qwen2.5-7B protocol v1.2 Real Tool 1000
+
+After protocol v1.2, the 7B 100-task smoke passed, then the 7B 1000-task matrix
+completed successfully.
+
+Prefix:
+
+```text
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_1000_protocol_v1_2
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Fallback step | Schema validity | Premature final | Collapse |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 1000/1000 | 200/200 | 800/800 | 2.2390 | 2239.0000 | 0.0000 | 1.0000 | 0.0390 | 0.0000 |
+| Identity hook | 1000/1000 | 200/200 | 800/800 | 2.2390 | 2239.0000 | 0.0000 | 1.0000 | 0.0390 | 0.0000 |
+| Nested uniform 10 | 1000/1000 | 200/200 | 800/800 | 2.0000 | 1999.9970 | 0.0909 | 1.0000 | 0.0000 | 0.0000 |
+| Adaptive B20 | 1000/1000 | 200/200 | 800/800 | 1.9000 | 1899.9974 | 0.0909 | 1.0000 | 0.0000 | 0.0000 |
+
+By tool:
+
+| Method | Calculator | Lookup | Unit convert |
+|---|---:|---:|---:|
+| Dense | 333/333 | 333/333 | 334/334 |
+| Identity hook | 333/333 | 333/333 | 334/334 |
+| Nested uniform 10 | 333/333 | 333/333 | 334/334 |
+| Adaptive B20 | 333/333 | 333/333 | 334/334 |
+
+Cost reductions:
+
+| Comparison | Cost / success reduction | Active FFN cost reduction |
+|---|---:|---:|
+| Nested uniform 10 vs dense | 10.7% | 10.7% |
+| Adaptive B20 vs dense | 15.1% | 15.1% |
+| Adaptive B20 vs nested uniform 10 | 5.0% | 5.0% |
+
+Interpretation:
+
+```text
+Qwen2.5-7B protocol v1.2 is now the strongest current Agent Prune result.
+Adaptive-B20 matches dense task success on 1000/1000 tasks, including
+200/200 injected-failure tasks, with schema_validity 1.0 and no collapse.
+It reduces active-FFN cost_per_success from 2.2390 to 1.9000, about 15.1%.
+```
+
+This remains an active-FFN-cost result, not a wall-clock latency result.
+
 Suggested output prefixes:
 
 ```text

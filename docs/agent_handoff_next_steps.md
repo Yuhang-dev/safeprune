@@ -381,7 +381,20 @@ protocol v1.1 下 dense == identity_hook，但 100-task dense 只有 91/100。
 
 这不是剪枝失败，也不是 parser/tool bug，而是 observation-to-final formatting。
 已加入 protocol v1.2 hardening：lookup observation 后明确要求 final answer
-必须精确复制 `owner_N`，不能只输出数字 id。下一步重跑 7B 100 smoke，仍不要直接跑 1000。
+必须精确复制 `owner_N`，不能只输出数字 id。
+
+protocol v1.2 后，7B 100 smoke 与 1000 正式矩阵均已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 1000/1000 | 200/200 | 800/800 | 2.2390 | 1.0000 |
+| identity_hook | 1000/1000 | 200/200 | 800/800 | 2.2390 | 1.0000 |
+| nested_uniform_10 | 1000/1000 | 200/200 | 800/800 | 2.0000 | 1.0000 |
+| adaptive_B20 | 1000/1000 | 200/200 | 800/800 | 1.9000 | 1.0000 |
+
+`adaptive_B20` 相对 dense 的 active-FFN cost_per_success 降约 15.1%，且三类工具全满分。
+当前不要继续重复同配置 7B 1000；下一步是 7B 静态 benchmark、3B protocol v1.2 sanity 取舍、
+以及 compact subnet / latency。
 
 ## 2. 为什么要这样做
 

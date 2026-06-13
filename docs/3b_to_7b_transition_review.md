@@ -20,11 +20,13 @@ Two issues were found and fixed:
 After fixes, 7B dense/identity gate passed.
 After protocol v1.1, 7B 20-task full minismoke passed.
 The first 7B 100-task smoke exposed a lookup final-answer formatting issue.
-Protocol v1.2 now hardens observation-to-final instructions.
-Next step is rerunning the 7B 100-task smoke, not 1000 yet.
+Protocol v1.2 hardens observation-to-final instructions.
+After protocol v1.2, 7B 100-task smoke passed.
+After protocol v1.2, 7B 1000-task evaluation passed.
 ```
 
-Current 7B result is still a smoke/debug result, not a final 7B claim.
+Current 7B result is a 1000-task active-FFN-cost result, not a wall-clock
+speedup result.
 
 ## 2. 3B as the Anchor, Not the Main Focus
 
@@ -315,8 +317,6 @@ schema-safe nested 10% works, and generation-type routing with 20% final-answer
 budget further reduces active FFN cost without losing success on this smoke.
 ```
 
-## 9. What Is Proven So Far
-
 ## 9. 7B 100-task Smoke Issue: Lookup Final Answer Dropped Prefix
 
 After the 20-task minismoke passed, the project started a 100-task 7B smoke
@@ -400,7 +400,102 @@ Rerun 7B 100-task smoke under the post-v1.2 code.
 Do not run 7B 1000 until dense/identity and adaptive_B20 pass the 100-task gate.
 ```
 
-## 10. What Is Proven So Far
+## 10. 7B Protocol v1.2 100-task Smoke
+
+After protocol v1.2, the 7B 100-task smoke passed.
+
+Prefix:
+
+```text
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_smoke_100_protocol_v1_2
+```
+
+| Method | Success | Failure | Non-failure | Schema validity | Premature final | Fallback step | Cost / success | Active FFN cost |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 1.0000 | 0.0100 | 0.0000 | 2.2100 | 221.0000 |
+| identity_hook | 100/100 | 20/20 | 80/80 | 1.0000 | 0.0100 | 0.0000 | 2.2100 | 221.0000 |
+| nested_uniform_10 | 100/100 | 20/20 | 80/80 | 1.0000 | 0.0000 | 0.0909 | 2.0000 | 199.9997 |
+| adaptive_B20 | 100/100 | 20/20 | 80/80 | 1.0000 | 0.0000 | 0.0909 | 1.9000 | 189.9997 |
+
+By tool for all methods:
+
+| Tool | Correct |
+|---|---:|
+| calculator | 34/34 |
+| lookup | 33/33 |
+| unit_convert | 33/33 |
+
+Cost reductions in the 7B 100-task smoke:
+
+| Comparison | Cost / success reduction |
+|---|---:|
+| nested_uniform_10 vs dense | 9.5% |
+| adaptive_B20 vs dense | 14.0% |
+| adaptive_B20 vs nested_uniform_10 | 5.0% |
+
+Interpretation:
+
+```text
+Protocol v1.2 resolved the lookup owner-prefix issue.
+The 100-task smoke satisfied the 1000-entry gate:
+dense == identity_hook, all methods reached 100/100, all tools were perfect,
+schema validity was 1.0, and adaptive_B20 had the lowest cost_per_success.
+```
+
+## 11. 7B Protocol v1.2 1000-task Result
+
+The 7B 1000-task run completed under protocol v1.2.
+
+Prefix:
+
+```text
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_1000_protocol_v1_2
+```
+
+| Method | Success | Failure | Non-failure | Schema validity | Premature final | Fallback step | Cost / success | Active FFN cost |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| dense | 1000/1000 | 200/200 | 800/800 | 1.0000 | 0.0390 | 0.0000 | 2.2390 | 2239.0000 |
+| identity_hook | 1000/1000 | 200/200 | 800/800 | 1.0000 | 0.0390 | 0.0000 | 2.2390 | 2239.0000 |
+| nested_uniform_10 | 1000/1000 | 200/200 | 800/800 | 1.0000 | 0.0000 | 0.0909 | 2.0000 | 1999.9970 |
+| adaptive_B20 | 1000/1000 | 200/200 | 800/800 | 1.0000 | 0.0000 | 0.0909 | 1.9000 | 1899.9974 |
+
+By tool for all methods:
+
+| Tool | Correct |
+|---|---:|
+| calculator | 333/333 |
+| lookup | 333/333 |
+| unit_convert | 334/334 |
+
+Events:
+
+| Method family | Events |
+|---|---|
+| dense / identity_hook | empty_observation: 67, timeout: 67, tool_error: 66, premature_final: 39, ok: 1000 |
+| nested_uniform_10 / adaptive_B20 | empty_observation: 67, timeout: 67, tool_error: 66, ok: 1000 |
+
+Cost reductions in the 7B 1000-task run:
+
+| Comparison | Cost / success reduction |
+|---|---:|
+| nested_uniform_10 vs dense | 10.7% |
+| adaptive_B20 vs dense | 15.1% |
+| adaptive_B20 vs nested_uniform_10 | 5.0% |
+
+Interpretation:
+
+```text
+This is the current 7B main result.
+Adaptive-B20 preserves dense-equivalent success: 1000/1000 overall,
+200/200 failure, 800/800 non-failure, and schema_validity 1.0.
+It reduces active-FFN cost_per_success from 2.2390 to 1.9000.
+The improvement over nested_uniform_10 shows generation-type routing is useful
+beyond simply using a uniform 10% nested budget.
+```
+
+This is still an active-FFN-cost result. It is not a wall-clock speedup claim.
+
+## 12. What Is Proven So Far
 
 Supported by current evidence:
 
@@ -414,47 +509,35 @@ Supported by current evidence:
 7. On 7B 20-task smoke, adaptive_B20 has lower cost_per_success than nested_uniform_10.
 8. The first 7B 100-task failure is now localized to lookup final-answer
    formatting, and protocol v1.2 targets that issue.
+9. Protocol v1.2 passes 7B 100-task smoke.
+10. Protocol v1.2 passes 7B 1000-task evaluation.
+11. Adaptive-B20 matches dense success on 7B 1000 while reducing
+    cost_per_success by about 15.1%.
 ```
 
 Not proven yet:
 
 ```text
-1. 7B 100-task stability.
-2. 7B 1000-task stability.
-3. Real wall-clock speedup.
-4. Final cross-model comparison between 3B protocol v1 and 7B protocol v1.1.
-5. Whether protocol v1.2 fully resolves the 7B 100-task lookup issue.
+1. Real wall-clock speedup.
+2. Compact subnet equivalence with mask-hook plans.
+3. Final cross-model comparison between 3B protocol v1 and 7B protocol v1.2.
+4. Whether 3B should be rerun under protocol v1.2 before presenting a single
+   cross-model table.
+5. General benchmark retention for 7B nested 10% / 20% static plans.
 ```
 
-## 11. Next Step
+## 13. Next Step
 
-Rerun 7B 100-task smoke under the post-v1.2 code.
-
-Matrix:
+Do not rerun the same 7B 1000 matrix. The next work should move to:
 
 ```text
-dense
-identity_hook
-nested_uniform_10
-adaptive_B20
+1. Freeze the 7B protocol v1.2 result in the main docs.
+2. Run 7B static benchmark sanity for dense / nested 10% / nested 20%.
+3. Decide whether to rerun 3B under protocol v1.2 for a clean cross-model table.
+4. Start compact subnet equivalence and latency work.
 ```
 
-Gate for entering 7B 1000:
-
-| Metric | Target |
-|---|---:|
-| dense vs identity_hook | identical or very close |
-| dense success | >= 98/100 |
-| adaptive_B20 success | >= 98/100 |
-| failure success | >= 19/20 |
-| unit_convert | >= 32/33 |
-| schema_validity | >= 0.98 |
-| generation_collapse_rate | 0 |
-| cost ordering | adaptive_B20 < nested_uniform_10 < dense |
-
-Do not run 7B 1000 until 100-task smoke passes.
-
-## 12. Review Checklist
+## 14. Review Checklist
 
 Ask the reviewer to check:
 
@@ -464,12 +547,13 @@ Ask the reviewer to check:
 3. Is it correct to classify the pre-v1.1 7B failure as a protocol gate failure?
 4. Is it correct to classify the first 7B 100-task failure as
    observation-to-final formatting rather than pruning?
-5. Are the 3B and 7B results separated clearly by protocol version and task scale?
-6. Is the 7B 20-task result only sufficient for entering 100 smoke, not for final claims?
-7. Should 3B be rerun under protocol v1.1/v1.2 before presenting 3B and 7B in one final table?
+5. Does the 7B 1000 protocol v1.2 result support the stated active-FFN-cost claim?
+6. Are the 3B and 7B results separated clearly by protocol version and task scale?
+7. Should 3B be rerun under protocol v1.2 before presenting 3B and 7B in one final table?
+8. What evidence is still needed before claiming real wall-clock speedup?
 ```
 
-## 13. Files to Inspect
+## 15. Files to Inspect
 
 Core protocol and runner:
 

@@ -33,9 +33,11 @@ cost per successful task = total active FFN cost / successful tasks
 | P2c adaptive budget routing | `[DONE]` | 1000 最小矩阵已完成；adaptive_B20 追平 dense 997/1000，cost_per_success 降到 1.9057。 |
 | Identity no-op fix | `[DONE]` | `_empty_plan_like()` 已修复 stale bias compensation；P2c final table 需用修复后 sanity rerun 确认。 |
 | Real Tool protocol v1.1 | `[DONE]` | 7B trace 显示 `unit_convert` 被写进 `type`；已加强 prompt/error feedback，parser 仍保持 strict。 |
-| P4 Qwen2.5-7B extension | `[NEXT]` | 先重跑 protocol v1.1 dense/identity gate 和 20 条 minismoke；通过后再跑 100/1000。 |
+| Real Tool protocol v1.2 | `[DONE]` | 修复 7B lookup observation 后 final 丢 `owner_` 前缀的问题；strict parser/evaluator 不变。 |
+| P4 Qwen2.5-7B extension | `[DONE]` | protocol v1.2 1000 已完成；adaptive_B20 1000/1000，cost_per_success 1.9000，较 dense 降约 15.1%。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
-| compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
+| 7B static benchmark | `[NEXT]` | 补 dense / nested 10% / nested 20% 的 WikiText-2、PIQA、HellaSwag、ARC-Easy。 |
+| compact FFN / kernel | `[NEXT]` | 第一版只做 mask-based 算法验证；下一步物化 FFN-only compact subnet 才能测真实加速。 |
 
 ## 1. 为什么转向 Agent 动态 FFN
 
