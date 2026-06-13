@@ -189,6 +189,33 @@ class AgentLoopTests(unittest.TestCase):
             },
         )
 
+    def test_lookup_observation_feedback_requires_owner_prefix(self):
+        seen_messages = []
+
+        def generate(messages):
+            seen_messages.append(list(messages))
+            if len(seen_messages) == 1:
+                return '{"type":"tool_call","name":"lookup","arguments":{"project":"PRJ-7"}}'
+            return '{"type":"final","answer":"owner_7"}'
+
+        row = run_real_tool_episode(
+            task=_task(
+                user_request="Who owns PRJ-7?",
+                tool="lookup",
+                expected_tool="lookup",
+                expected_arguments={"project": "PRJ-7"},
+                expected_answer="owner_7",
+            ),
+            registry=default_tool_registry(),
+            route_fn=_route,
+            generate_fn=generate,
+        )
+
+        self.assertTrue(row["success"])
+        second_prompt = seen_messages[1][-1]["content"]
+        self.assertIn('final answer must be exactly "owner_7"', second_prompt)
+        self.assertIn("keep the owner_ prefix", second_prompt)
+
     def test_timeout_triggers_dense_fallback_on_next_step(self):
         seen_generation_types = []
 

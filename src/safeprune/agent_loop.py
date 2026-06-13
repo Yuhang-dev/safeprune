@@ -519,16 +519,37 @@ def _premature_final_observation() -> dict[str, Any]:
 
 
 def _observation_prompt(observation: dict[str, Any]) -> str:
+    final_instruction = _final_answer_instruction(observation)
     return (
         "Tool observation:\n"
         + tool_observation_message(observation)
         + "\n\nNext action rules:\n"
         + "- If ok is true, answer with exactly one final JSON object using the observed result.\n"
+        + final_instruction
         + "- If ok is false and retryable is true, call the needed tool again with valid arguments.\n"
         + '- For a retry, the top-level "type" must be "tool_call"; put the tool name in "name".\n'
         + '- Example retry shape: {"type":"tool_call","name":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}\n'
         + "- Output no text outside the JSON object."
     )
+
+
+def _final_answer_instruction(observation: dict[str, Any]) -> str:
+    if not observation.get("ok"):
+        return ""
+    output = observation.get("output") or {}
+    if not isinstance(output, dict):
+        return ""
+    tool = observation.get("tool")
+    if tool == "lookup" and isinstance(output.get("owner"), str):
+        owner = output["owner"]
+        return (
+            f'- For lookup, the final answer must be exactly "{owner}". '
+            "Do not answer only the numeric project id; keep the owner_ prefix.\n"
+        )
+    if tool in {"calculator", "unit_convert"} and "result" in output:
+        result = output["result"]
+        return f'- For {tool}, use the observed result value exactly: "{result}".\n'
+    return ""
 
 
 def _episode_payload(

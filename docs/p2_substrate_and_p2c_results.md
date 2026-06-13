@@ -365,6 +365,25 @@ The parser remains strict; no string-to-number coercion, enum relaxation, or
 extra-field tolerance is added to the main benchmark. If tolerant parsing is
 needed later, it should be a separate ablation, not the main protocol.
 
+### Real Tool protocol v1.2 observation-to-final hardening
+
+The 7B protocol v1.1 20-task minismoke passed, but the first 100-task smoke
+exposed a lookup-specific final-answer problem. Dense and identity matched, but
+both reached only 91/100 because lookup succeeded at the tool level and then
+the final answer dropped the `owner_` prefix:
+
+```text
+observation: {"owner":"owner_3007"}
+wrong final: {"type":"final","answer":"3007"}
+expected:    {"type":"final","answer":"owner_3007"}
+```
+
+This is an observation-to-final formatting issue, not a parser or tool-call
+issue. Protocol v1.2 adds exact final-answer instructions after successful
+observations. For lookup, the model is told to answer exactly the observed
+`owner_N` value and not only the numeric project id. The strict parser and
+strict evaluator remain unchanged.
+
 Suggested output prefixes:
 
 ```text

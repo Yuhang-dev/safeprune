@@ -371,6 +371,18 @@ parser 仍然 strict，不放宽 JSON schema
 
 下一轮 7B 只重跑 dense/identity gate 和 20 条 minismoke，不直接跑 100。
 
+最新 7B 100-task smoke 诊断：
+
+```text
+protocol v1.1 下 dense == identity_hook，但 100-task dense 只有 91/100。
+失败集中在 lookup：工具调用和 observation 都正确，final answer 丢了 owner_ 前缀。
+例子：observation owner_3007，final 写成 3007。
+```
+
+这不是剪枝失败，也不是 parser/tool bug，而是 observation-to-final formatting。
+已加入 protocol v1.2 hardening：lookup observation 后明确要求 final answer
+必须精确复制 `owner_N`，不能只输出数字 id。下一步重跑 7B 100 smoke，仍不要直接跑 1000。
+
 ## 2. 为什么要这样做
 
 1000 条 controlled mask validation 已经完成 MVP 机制验证：
