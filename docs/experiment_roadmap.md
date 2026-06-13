@@ -31,6 +31,8 @@ cost per successful task = total active FFN cost / successful tasks
 | FLAP-style substrate v2 | `[DONE]` | 10% Real Tool 1000 已完成；稳定但非无损，cost_per_success 约降 5.8%。 |
 | Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
 | P2c adaptive budget routing | `[DONE]` | 1000 最小矩阵已完成；adaptive_B20 追平 dense 997/1000，cost_per_success 降到 1.9057。 |
+| Identity no-op fix | `[DONE]` | `_empty_plan_like()` 已修复 stale bias compensation；P2c final table 需用修复后 sanity rerun 确认。 |
+| P4 Qwen2.5-7B extension | `[NEXT]` | 先重跑 dense/identity gate 和 20 条 minismoke；通过后再跑 100/1000。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -228,6 +230,17 @@ adaptive_B20
 相对 dense，`adaptive_B20` 的 cost_per_success 下降约 13.6%；相对
 `nested_uniform_10` 下降约 5.0%。
 
+Post-freeze correction:
+
+```text
+_empty_plan_like() previously left mlp_output_bias_compensation and
+mlp_output_scale in derived identity plans. That could make identity_hook a
+Dense + stale compensation run instead of a true no-op hook.
+```
+
+The code is fixed. Final paper tables should use a post-fix sanity rerun for
+any `identity_hook` or dense-fallback comparison.
+
 ## 4. 实验顺序
 
 1. `[DONE]` 冻结 controlled mask validation v1：
@@ -378,7 +391,9 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 `substrate_flap_0p10_observe_failure_redense`。
 13. `[DONE]` 跑 P2c 1000 最小矩阵：
 `dense`、`identity_hook`、`nested_uniform_10`、`adaptive_B20`。
-14. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+14. `[DONE]` 修复 `_empty_plan_like()` stale bias compensation，补单测。
+15. `[NEXT]` 重跑 3B P2c 最小矩阵 sanity 和 7B dense/identity gate。
+16. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 P2c 已实现的入口：
 

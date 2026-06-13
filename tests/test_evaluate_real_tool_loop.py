@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 from safeprune.agent_loop import summarize_real_tool_rows
 from safeprune.hidden_state_router import HiddenStateCentroidRouter
+from safeprune.stage_masks import active_mlp_ratio_from_plan
+from scripts.evaluate_agent_masks import _empty_plan_like
 from scripts.evaluate_real_tool_loop import (
     DEFAULT_REAL_TOOL_METHODS,
     REAL_TOOL_METHODS,
@@ -85,6 +87,30 @@ def _hidden_runtime(*, reflect_mode="stage", event_override=False):
 
 
 class EvaluateRealToolLoopTests(unittest.TestCase):
+    def test_empty_plan_like_removes_bias_compensation_and_scale(self):
+        source = {
+            "allocation": {"0": 0.2},
+            "layers": [
+                {
+                    "layer": 0,
+                    "num_mlp_channels": 10,
+                    "pruned_attention_heads": [1],
+                    "pruned_mlp_channels": [2, 3],
+                    "mlp_output_bias_compensation": [0.1, 0.2],
+                    "mlp_output_scale": 1.0,
+                }
+            ],
+        }
+
+        identity = _empty_plan_like(source)
+
+        self.assertEqual(identity["allocation"], {})
+        self.assertEqual(identity["layers"][0]["pruned_attention_heads"], [])
+        self.assertEqual(identity["layers"][0]["pruned_mlp_channels"], [])
+        self.assertNotIn("mlp_output_bias_compensation", identity["layers"][0])
+        self.assertNotIn("mlp_output_scale", identity["layers"][0])
+        self.assertAlmostEqual(active_mlp_ratio_from_plan(identity), 1.0)
+
     def test_default_methods_include_bypass_methods_but_not_hidden_centroid(self):
         self.assertIn(
             "observe_failure_redense_global_balanced_approx_0.01",

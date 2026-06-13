@@ -62,6 +62,8 @@ def _empty_plan_like(plan: dict[str, Any]) -> dict[str, Any]:
     for layer in empty["layers"]:
         layer["pruned_attention_heads"] = []
         layer["pruned_mlp_channels"] = []
+        layer.pop("mlp_output_bias_compensation", None)
+        layer.pop("mlp_output_scale", None)
     empty["allocation"] = {}
     return empty
 

@@ -318,6 +318,34 @@ Adaptive-B20 是否能扩展到 Qwen2.5-7B smoke
 active FFN cost 是否能通过 compact subnet 转成真实 latency 收益
 ```
 
+最新重要修复：
+
+```text
+_empty_plan_like() 曾经只清空 pruned_mlp_channels，没有清空
+mlp_output_bias_compensation / mlp_output_scale。
+因此从带 bias compensation 的 substrate plan 派生出的 identity_hook
+可能不是严格 dense，而是 Dense + stale bias compensation。
+```
+
+修复已完成：
+
+```text
+scripts/evaluate_agent_masks.py
+tests/test_evaluate_real_tool_loop.py
+```
+
+这不会直接否定 Adaptive-B20 的机制，因为 10% / 20% substrate plan 的
+bias compensation 是设计内行为；但所有依赖 `identity_hook == dense` 或
+`reflect -> dense fallback` 的 sanity 结论都必须在修复后重跑确认。
+
+当前下一步不要跑 7B 100/1000。先做：
+
+```text
+1. 3B P2c 最小矩阵 sanity rerun。
+2. 7B dense / identity_hook repeat gate。
+3. 7B 20-task minismoke matrix。
+```
+
 ## 2. 为什么要这样做
 
 1000 条 controlled mask validation 已经完成 MVP 机制验证：
@@ -684,6 +712,10 @@ generation_collapse_rate = 0
 
 这条判断已完成：`adaptive_B20` 1000 稳定，已冻结为 P2c 主结果。
 
+注意：P2c 主结果是在 `_empty_plan_like()` 修复前跑出的。由于 3B 的
+`dense` 与 `identity_hook` 当时任务级结果一致，主结论大概率不变；但
+论文级最终数字应以修复后的 sanity rerun 为准。
+
 ## 7. 不要做
 
 当前不要做：
@@ -693,6 +725,7 @@ generation_collapse_rate = 0
 不要重新尝试 attention head pruning。
 不要声称 mask hook 有真实 wall-clock speedup。
 不要直接上 7B 1000；先跑 7B Real Tool 100 smoke。
+不要在修复后的 dense / identity_hook gate 通过前跑 7B Real Tool 100 smoke。
 不要把远端输出 vendoring 到 src/。
 不要跳过 dense/identity 对齐检查。
 不要在 real tool smoke 不稳定时加入复杂工具或 stateful DB。

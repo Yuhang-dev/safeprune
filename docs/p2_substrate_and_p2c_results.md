@@ -298,6 +298,51 @@ without increasing schema errors, premature final, or generation collapse.
 
 This is the current P2c main result. It is still an active-FFN-cost result, not a wall-clock speedup result.
 
+### Post-freeze identity-hook fix
+
+After the first 7B minismoke, we found a no-op-plan construction bug:
+`_empty_plan_like()` cleared `pruned_mlp_channels` but did not remove
+`mlp_output_bias_compensation` or `mlp_output_scale`. For substrate plans with
+bias compensation, `identity_hook` could therefore become:
+
+```text
+Dense forward + stale MLP output bias compensation
+```
+
+instead of a true no-op hook. This directly explains why a 7B minismoke could
+show `dense != identity_hook` under deterministic decoding.
+
+The fix is in `scripts/evaluate_agent_masks.py`: `_empty_plan_like()` now clears
+both compensation fields. The regression test is
+`tests/test_evaluate_real_tool_loop.py::EvaluateRealToolLoopTests.test_empty_plan_like_removes_bias_compensation_and_scale`.
+
+Impact on frozen 3B results:
+
+```text
+The main Adaptive-B20 mechanism is not automatically invalidated, because the
+10% and 20% substrate plans intentionally use their own bias compensation.
+
+However, every table row that uses identity_hook or a dense fallback generated
+from _empty_plan_like() should be treated as requiring a sanity rerun after this
+fix. In particular, the strict claim "identity_hook == dense" must be
+reconfirmed before using the table as final paper evidence.
+```
+
+Required post-fix sanity rerun:
+
+```text
+3B: dense / identity_hook / nested_uniform_10 / adaptive_B20 on the P2c 1000 set.
+7B: dense / identity_hook first, then the 20-task minismoke matrix.
+```
+
+Suggested output prefixes:
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000_identityfix
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_identityfix_gate
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_identityfix
+```
+
 Reproduction command:
 
 ```bash
