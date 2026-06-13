@@ -36,7 +36,12 @@ BENCHMARK_LOADERS: dict[str, tuple[str, str | None, str, Callable[[dict[str, Any
 def _load_wikitext_texts(max_samples: int) -> list[str]:
     from datasets import load_dataset
 
-    dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+    dataset = load_dataset(
+        "wikitext",
+        "wikitext-2-raw-v1",
+        split="test",
+        trust_remote_code=True,
+    )
     texts = [
         str(row["text"]).strip()
         for row in dataset
@@ -49,7 +54,12 @@ def _load_mc_examples(benchmark: str, max_samples: int):
     from datasets import load_dataset
 
     dataset_name, subset, split, builder = BENCHMARK_LOADERS[benchmark]
-    dataset = load_dataset(dataset_name, subset, split=split)
+    dataset = load_dataset(
+        dataset_name,
+        subset,
+        split=split,
+        trust_remote_code=True,
+    )
     examples = []
     for row in dataset:
         examples.append(builder(row))
