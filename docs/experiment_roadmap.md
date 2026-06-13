@@ -32,7 +32,8 @@ cost per successful task = total active FFN cost / successful tasks
 | Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
 | P2c adaptive budget routing | `[DONE]` | 1000 最小矩阵已完成；adaptive_B20 追平 dense 997/1000，cost_per_success 降到 1.9057。 |
 | Identity no-op fix | `[DONE]` | `_empty_plan_like()` 已修复 stale bias compensation；P2c final table 需用修复后 sanity rerun 确认。 |
-| P4 Qwen2.5-7B extension | `[NEXT]` | 先重跑 dense/identity gate 和 20 条 minismoke；通过后再跑 100/1000。 |
+| Real Tool protocol v1.1 | `[DONE]` | 7B trace 显示 `unit_convert` 被写进 `type`；已加强 prompt/error feedback，parser 仍保持 strict。 |
+| P4 Qwen2.5-7B extension | `[NEXT]` | 先重跑 protocol v1.1 dense/identity gate 和 20 条 minismoke；通过后再跑 100/1000。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -241,6 +242,22 @@ Dense + stale compensation run instead of a true no-op hook.
 The code is fixed. Final paper tables should use a post-fix sanity rerun for
 any `identity_hook` or dense-fallback comparison.
 
+7B dense after the identity fix still failed because the model generated:
+
+```json
+{"type":"unit_convert","arguments":{"value":7,"from_unit":"m","to_unit":"cm"}}
+```
+
+instead of the required:
+
+```json
+{"type":"tool_call","name":"unit_convert","arguments":{"value":7,"from_unit":"m","to_unit":"cm"}}
+```
+
+This is a protocol-shape adherence problem, not a pruning result. Real Tool
+protocol v1.1 hardens the prompt and schema-error feedback while keeping the
+strict parser unchanged.
+
 ## 4. 实验顺序
 
 1. `[DONE]` 冻结 controlled mask validation v1：
@@ -392,8 +409,9 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 13. `[DONE]` 跑 P2c 1000 最小矩阵：
 `dense`、`identity_hook`、`nested_uniform_10`、`adaptive_B20`。
 14. `[DONE]` 修复 `_empty_plan_like()` stale bias compensation，补单测。
-15. `[NEXT]` 重跑 3B P2c 最小矩阵 sanity 和 7B dense/identity gate。
-16. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+15. `[DONE]` 定位 7B unit_convert schema 错误，加入 Real Tool protocol v1.1 hardening。
+16. `[NEXT]` 重跑 3B P2c 最小矩阵 sanity 和 7B protocol v1.1 dense/identity gate。
+17. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 P2c 已实现的入口：
 

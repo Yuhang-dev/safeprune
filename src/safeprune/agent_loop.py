@@ -40,17 +40,48 @@ REFLECT_EVENTS = {
 
 
 def build_tool_system_prompt(registry: ToolRegistry) -> str:
+    examples = _tool_call_examples(registry)
     return (
         "You are a tool-using agent.\n"
         "You must output exactly one JSON object and no extra text.\n\n"
+        "Strict protocol:\n"
+        '- The top-level "type" value must be exactly "tool_call" or "final".\n'
+        '- Never put a tool name in "type". Wrong: '
+        '{"type":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}\n'
+        '- Correct: '
+        '{"type":"tool_call","name":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}\n'
+        "- For these benchmark tasks, a successful tool call is mandatory before final.\n"
+        "- If a previous JSON object was rejected, fix the JSON shape instead of repeating it.\n\n"
         "To call a tool:\n"
         '{"type":"tool_call","name":"<tool_name>","arguments":{...}}\n\n'
         "To answer the user:\n"
         '{"type":"final","answer":"<answer>"}\n\n'
+        "Valid tool_call examples:\n"
+        f"{examples}\n\n"
         "Never invent tool results. After a tool observation, use it to decide the next action.\n"
         "Available tools:\n"
         f"{json.dumps(registry.schemas(), ensure_ascii=False)}"
     )
+
+
+def _tool_call_examples(registry: ToolRegistry) -> str:
+    example_args = {
+        "calculator": {"expression": "2 + 3"},
+        "unit_convert": {"value": 2, "from_unit": "m", "to_unit": "cm"},
+        "lookup": {"project": "PRJ-4"},
+    }
+    lines = []
+    for schema in registry.schemas():
+        name = str(schema.get("name", "tool"))
+        args = example_args.get(name, {})
+        lines.append(
+            json.dumps(
+                {"type": "tool_call", "name": name, "arguments": args},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    return "\n".join(lines)
 
 
 def run_real_tool_episode(
@@ -491,6 +522,8 @@ def _observation_prompt(observation: dict[str, Any]) -> str:
         + "\n\nNext action rules:\n"
         + "- If ok is true, answer with exactly one final JSON object using the observed result.\n"
         + "- If ok is false and retryable is true, call the needed tool again with valid arguments.\n"
+        + '- For a retry, the top-level "type" must be "tool_call"; put the tool name in "name".\n'
+        + '- Example retry shape: {"type":"tool_call","name":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}\n'
         + "- Output no text outside the JSON object."
     )
 

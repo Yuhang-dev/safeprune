@@ -1,6 +1,11 @@
 import unittest
 
-from safeprune.agent_loop import RouteOutcome, run_real_tool_episode, summarize_real_tool_rows
+from safeprune.agent_loop import (
+    RouteOutcome,
+    build_tool_system_prompt,
+    run_real_tool_episode,
+    summarize_real_tool_rows,
+)
 from safeprune.tool_env import validate_real_tool_task
 from safeprune.tools import default_tool_registry
 
@@ -37,6 +42,16 @@ class _SequenceGenerator:
 
 
 class AgentLoopTests(unittest.TestCase):
+    def test_system_prompt_hardens_tool_call_shape(self):
+        prompt = build_tool_system_prompt(default_tool_registry())
+
+        self.assertIn('The top-level "type" value must be exactly "tool_call" or "final"', prompt)
+        self.assertIn('Never put a tool name in "type"', prompt)
+        self.assertIn(
+            '{"type":"tool_call","name":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}',
+            prompt,
+        )
+
     def test_successful_tool_loop(self):
         row = run_real_tool_episode(
             task=_task(),

@@ -335,12 +335,40 @@ Required post-fix sanity rerun:
 7B: dense / identity_hook first, then the 20-task minismoke matrix.
 ```
 
+### Real Tool protocol v1.1 hardening
+
+The post-fix 7B dense/identity gate showed `dense == identity_hook`, but dense
+still failed on 6/7 `unit_convert` tasks. The trace showed a concentrated schema
+mistake:
+
+```json
+{"type":"unit_convert","arguments":{"value":7,"from_unit":"m","to_unit":"cm"}}
+```
+
+This is not a validator bug. The strict protocol requires:
+
+```json
+{"type":"tool_call","name":"unit_convert","arguments":{"value":7,"from_unit":"m","to_unit":"cm"}}
+```
+
+So v1.1 hardens only the prompt and error feedback:
+
+```text
+Do not put tool names in type.
+The top-level type must be exactly tool_call or final.
+If a previous JSON object was rejected, fix the shape instead of repeating it.
+```
+
+The parser remains strict; no string-to-number coercion, enum relaxation, or
+extra-field tolerance is added to the main benchmark. If tolerant parsing is
+needed later, it should be a separate ablation, not the main protocol.
+
 Suggested output prefixes:
 
 ```text
 outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000_identityfix
-outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_identityfix_gate
-outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_identityfix
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_protocol_v1_1_gate
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_protocol_v1_1
 ```
 
 Reproduction command:

@@ -346,6 +346,31 @@ bias compensation 是设计内行为；但所有依赖 `identity_hook == dense` 
 3. 7B 20-task minismoke matrix。
 ```
 
+7B repeat gate 的 trace 进一步显示：
+
+```text
+dense == identity_hook
+calculator / lookup 正常
+unit_convert 失败集中为 schema_error
+模型反复输出 {"type":"unit_convert","arguments":{...}}
+```
+
+正确协议应是：
+
+```json
+{"type":"tool_call","name":"unit_convert","arguments":{"value":7,"from_unit":"m","to_unit":"cm"}}
+```
+
+因此已加入 Real Tool protocol v1.1 hardening：
+
+```text
+system prompt 明确禁止把工具名写进 type
+schema_error feedback 给出正确 retry shape
+parser 仍然 strict，不放宽 JSON schema
+```
+
+下一轮 7B 只重跑 dense/identity gate 和 20 条 minismoke，不直接跑 100。
+
 ## 2. 为什么要这样做
 
 1000 条 controlled mask validation 已经完成 MVP 机制验证：

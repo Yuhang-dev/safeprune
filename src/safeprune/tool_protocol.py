@@ -87,6 +87,16 @@ def parse_agent_output(text: str) -> ParseResult:
             action=AgentAction(type="final", answer=answer_text),
         )
 
+    if isinstance(kind, str):
+        return ParseResult(
+            ok=False,
+            event="schema_error",
+            error=(
+                "type must be tool_call or final; do not put a tool name in type. "
+                f"If you need the {kind} tool, use "
+                f'{{"type":"tool_call","name":"{kind}","arguments":{{...}}}}'
+            ),
+        )
     return ParseResult(ok=False, event="schema_error", error="type must be tool_call or final")
 
 

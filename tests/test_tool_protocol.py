@@ -46,6 +46,15 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertFalse(parsed.ok)
         self.assertEqual(parsed.event, "schema_error")
 
+    def test_reject_tool_name_as_type_with_actionable_error(self):
+        parsed = parse_agent_output(
+            '{"type":"unit_convert","arguments":{"value":2,"from_unit":"m","to_unit":"cm"}}'
+        )
+        self.assertFalse(parsed.ok)
+        self.assertEqual(parsed.event, "schema_error")
+        self.assertIn("do not put a tool name in type", parsed.error)
+        self.assertIn('"name":"unit_convert"', parsed.error)
+
 
 if __name__ == "__main__":
     unittest.main()
