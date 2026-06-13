@@ -27,9 +27,11 @@ from safeprune.substrate import (
     add_bias_compensation_to_plan,
     add_layer_output_scales,
     build_budget_options,
+    build_nested_global_budget_plans,
     build_plan_from_budget,
     compute_per_layer_loss_delta_matrix,
     optimize_layerwise_budget,
+    validate_nested_pruned_sets,
 )
 
 
@@ -61,9 +63,12 @@ def _load_prompt_rows(path: str | Path, limit: int | None = None) -> list[str]:
 
 
 def _prompt_from_row(row: dict) -> str | None:
+    assistant_target = row.get("assistant_target")
     for key in ["prompt", "user_request", "text"]:
         value = row.get(key)
         if isinstance(value, str) and value.strip():
+            if isinstance(assistant_target, str) and assistant_target.strip():
+                return f"{value}\nAssistant target:\n{assistant_target}"
             return value
     chosen = row.get("chosen")
     if isinstance(chosen, str) and chosen.strip():
@@ -111,6 +116,10 @@ def main() -> None:
     )
     parser.add_argument("--with-loss-delta", action="store_true")
     parser.add_argument("--loss-delta-prompts", type=int, default=32)
+    parser.add_argument("--nested-budget-ladder", action="store_true")
+    parser.add_argument("--schema-calibration-path")
+    parser.add_argument("--max-schema-calibration-prompts", type=int, default=512)
+    parser.add_argument("--schema-token-weight", type=float, default=1.0)
     parser.add_argument("--with-bias-compensation", action="store_true")
     parser.add_argument("--with-layer-scale-placeholder", action="store_true")
     parser.add_argument("--skip-model-load", action="store_true")
@@ -133,6 +142,13 @@ def main() -> None:
         "target_budgets": target_budgets,
         "score_methods": args.score_methods,
         "with_loss_delta": args.with_loss_delta,
+        "nested_budget_ladder": args.nested_budget_ladder,
+        "schema_calibration_path": args.schema_calibration_path,
+        "schema_token_weight": args.schema_token_weight,
+        "schema_weighting_note": (
+            "v1 uses schema-heavy assistant-target calibration snippets; "
+            "token-level weighting interface is reserved by --schema-token-weight."
+        ),
         "with_bias_compensation": args.with_bias_compensation,
         "with_layer_scale_placeholder": args.with_layer_scale_placeholder,
         "note": "Mask-hook substrate plans; not physical speedup evidence.",
@@ -148,6 +164,13 @@ def main() -> None:
         return
 
     prompts = _load_prompt_rows(calibration_path, limit=args.max_calibration_prompts)
+    if args.schema_calibration_path:
+        schema_prompts = _load_prompt_rows(
+            args.schema_calibration_path,
+            limit=args.max_schema_calibration_prompts,
+        )
+        prompts = [*prompts, *schema_prompts]
+        manifest["schema_calibration_count"] = len(schema_prompts)
     model, tokenizer = load_causal_lm_and_tokenizer(
         config.model.base_model,
         config.model,
@@ -193,24 +216,42 @@ def main() -> None:
         method_dir.mkdir(parents=True, exist_ok=True)
         save_scores(scores, method_dir / "scores.json")
         mask_bank_payload["plans"][method] = {}
-        options = build_budget_options(
-            scores=scores,
-            candidate_sparsities=candidate_sparsities,
-            min_mlp_channels_per_layer=config.pruning.min_mlp_channels_per_layer,
-            loss_delta_by_layer=loss_delta_by_method.get(method),
-        )
         plan_index[method] = {}
-        for target in target_budgets:
-            budget = optimize_layerwise_budget(options, target)
-            plan = build_plan_from_budget(
+        if args.nested_budget_ladder:
+            plans_by_target = build_nested_global_budget_plans(
                 scores=scores,
-                budget=budget,
+                target_budgets=target_budgets,
                 weights=weights,
                 min_mlp_channels_per_layer=config.pruning.min_mlp_channels_per_layer,
-                plan_name=f"{method}_{_budget_slug(target)}",
+                plan_name_prefix=method,
             )
+            nested_validation = validate_nested_pruned_sets(plans_by_target)
+        else:
+            options = build_budget_options(
+                scores=scores,
+                candidate_sparsities=candidate_sparsities,
+                min_mlp_channels_per_layer=config.pruning.min_mlp_channels_per_layer,
+                loss_delta_by_layer=loss_delta_by_method.get(method),
+            )
+            plans_by_target = {}
+            for target in target_budgets:
+                budget = optimize_layerwise_budget(options, target)
+                plan = build_plan_from_budget(
+                    scores=scores,
+                    budget=budget,
+                    weights=weights,
+                    min_mlp_channels_per_layer=config.pruning.min_mlp_channels_per_layer,
+                    plan_name=f"{method}_{_budget_slug(target)}",
+                )
+                plan["budget_plan"] = budget.to_dict()
+                plans_by_target[target] = plan
+            nested_validation = None
+
+        audit_payload = {}
+        for target in target_budgets:
+            plan = plans_by_target[float(target)]
             plan["substrate_method"] = method
-            plan["budget_plan"] = budget.to_dict()
+            plan["nested_budget_ladder"] = bool(args.nested_budget_ladder)
             if args.with_bias_compensation:
                 plan = add_bias_compensation_to_plan(model, stats, plan)
             if args.with_layer_scale_placeholder:
@@ -222,6 +263,21 @@ def main() -> None:
             save_plan(plan, plan_path)
             plan_index[method][str(target)] = str(plan_path)
             mask_bank_payload["plans"][method][_budget_slug(target)] = plan
+            audit_payload[f"{method}_{_budget_slug(target)}"] = plan
+
+        if args.nested_budget_ladder:
+            from scripts.audit_substrate_plans import audit_plans, to_markdown
+
+            audit = audit_plans(audit_payload)
+            audit["nested_validation"] = nested_validation
+            (method_dir / "nested_budget_audit.json").write_text(
+                json.dumps(audit, indent=2),
+                encoding="utf-8",
+            )
+            (method_dir / "nested_budget_audit.md").write_text(
+                to_markdown(audit),
+                encoding="utf-8",
+            )
 
     manifest["status"] = "complete"
     manifest["plans"] = plan_index

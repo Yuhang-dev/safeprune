@@ -309,6 +309,46 @@ relative to dense, while cost per success drops by about 5.8%. The
 stage-reflect-dense route has the same success as observe-failure-redense with
 about 45% fewer dense fallback steps.
 
+Next P2c smoke uses schema-aware nested plans and generation-type routing:
+
+```bash
+python scripts/prepare_schema_calibration.py \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --output data/agent/schema_calibration_v1.jsonl \
+  --max-tasks 500
+
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --schema-calibration-path data/agent/schema_calibration_v1.jsonl \
+  --max-calibration-prompts 512 \
+  --max-schema-calibration-prompts 1500 \
+  --target-budgets 0.05,0.10,0.12,0.15,0.18,0.20 \
+  --score-methods flap \
+  --nested-budget-ladder \
+  --schema-token-weight 1.0 \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested
+
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p05.json \
+  --substrate-name nested_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --substrate-name nested_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p15.json \
+  --substrate-name nested_0p15 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --substrate-name nested_0p20 \
+  --methods dense nested_uniform_10 adaptive_A adaptive_B15 adaptive_B20 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_smoke_100
+```
+
 Run local unit tests:
 
 ```bash

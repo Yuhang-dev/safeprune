@@ -11,8 +11,10 @@ from safeprune.stage_masks import active_mlp_ratio_from_plan
 from safeprune.substrate import (
     add_bias_compensation_to_plan,
     build_budget_options,
+    build_nested_global_budget_plans,
     build_plan_from_budget,
     optimize_layerwise_budget,
+    validate_nested_pruned_sets,
 )
 
 
@@ -126,6 +128,27 @@ class SubstrateV2Tests(unittest.TestCase):
 
         self.assertEqual(compensated["compensation"], "bias")
         self.assertEqual(compensated["layers"][0]["mlp_output_bias_compensation"], [130.0, 30.0])
+
+    def test_nested_budget_ladder_monotonically_expands_pruned_sets(self):
+        scores = [
+            LayerScores(layer=0, attention=[], mlp=[0.1, 0.2, 0.3, 0.4, 0.5]),
+        ]
+
+        plans = build_nested_global_budget_plans(
+            scores=scores,
+            target_budgets=[0.2, 0.4, 0.6],
+            weights=ScoreWeights(magnitude=1.0, activation=0.0, loss_delta=0.0),
+            min_mlp_channels_per_layer=1,
+            plan_name_prefix="flap",
+        )
+        validation = validate_nested_pruned_sets(plans)
+
+        self.assertEqual(validation["warnings"], [])
+        self.assertTrue(all(pair["left_subset_of_right"] for pair in validation["pairs"]))
+        self.assertEqual([pair["newly_pruned_count"] for pair in validation["pairs"]], [1, 1])
+        self.assertEqual(plans[0.2]["layers"][0]["pruned_mlp_channels"], [0])
+        self.assertEqual(plans[0.4]["layers"][0]["pruned_mlp_channels"], [0, 1])
+        self.assertAlmostEqual(active_mlp_ratio_from_plan(plans[0.6]), 0.4)
 
 
 if __name__ == "__main__":

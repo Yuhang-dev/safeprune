@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ class RouteOutcome:
 
 
 GenerateFn = Callable[[list[dict[str, str]]], str]
-RouteFn = Callable[[str, str, list[dict[str, str]]], RouteOutcome]
+RouteFn = Callable[..., RouteOutcome]
 
 REFLECT_EVENTS = {
     "format_error",
@@ -76,7 +77,8 @@ def run_real_tool_episode(
 
     for step_id in range(task.max_steps):
         stage = infer_next_stage(last_event, observations)
-        route = route_fn(stage, last_event, messages)
+        generation_type = infer_generation_type(last_event, observations)
+        route = _call_route_fn(route_fn, stage, last_event, messages, generation_type)
         raw_output = generate_fn(messages)
         parsed = parse_agent_output(raw_output)
         active_ratio = float(route.active_ffn_ratio)
@@ -84,6 +86,7 @@ def run_real_tool_episode(
         trace_row = {
             "step_id": step_id,
             "stage": stage,
+            "generation_type": generation_type,
             "event_before": last_event,
             "selected_stage": route.selected_stage,
             "selected_plan_name": route.selected_plan_name or route.selected_stage,
@@ -187,6 +190,48 @@ def infer_next_stage(last_event: str, observations: list[dict[str, Any]]) -> str
     if observations and observations[-1].get("ok"):
         return "answer"
     return "observe"
+
+
+def infer_generation_type(last_event: str, observations: list[dict[str, Any]]) -> str:
+    if last_event in REFLECT_EVENTS:
+        return "reflect_recovery"
+    if observations and _counts_as_successful_observation(observations[-1]):
+        return "final_answer"
+    return "tool_call_or_retry"
+
+
+def _call_route_fn(
+    route_fn: RouteFn,
+    stage: str,
+    event: str,
+    messages: list[dict[str, str]],
+    generation_type: str,
+) -> RouteOutcome:
+    if _route_fn_accepts_generation_type(route_fn):
+        return route_fn(stage, event, messages, generation_type)
+    return route_fn(stage, event, messages)
+
+
+def _route_fn_accepts_generation_type(route_fn: RouteFn) -> bool:
+    try:
+        signature = inspect.signature(route_fn)
+    except (TypeError, ValueError):
+        return True
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+    ]
+    if any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        for parameter in signature.parameters.values()
+    ):
+        return True
+    return len(positional) >= 4
 
 
 def summarize_real_tool_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -490,12 +535,7 @@ def _episode_payload(
     if success and entered_reflect and routing_trace:
         recovery_steps = int(routing_trace[-1]["step_id"]) - min(reflect_step_ids) + 1
     successful_tool_observations = [
-        observation
-        for observation in observations
-        if observation.get("ok")
-        and observation.get("event") in {"ok", "success"}
-        and observation.get("output") not in (None, {})
-        and observation.get("counts_as_successful_observation", True)
+        observation for observation in observations if _counts_as_successful_observation(observation)
     ]
     return {
         "task_id": task.task_id,
@@ -532,3 +572,12 @@ def _episode_payload(
         "successful_tool_observation_count": len(successful_tool_observations),
         "has_successful_tool_observation": bool(successful_tool_observations),
     }
+
+
+def _counts_as_successful_observation(observation: dict[str, Any]) -> bool:
+    return (
+        bool(observation.get("ok"))
+        and observation.get("event") in {"ok", "success"}
+        and observation.get("output") not in (None, {})
+        and bool(observation.get("counts_as_successful_observation", True))
+    )

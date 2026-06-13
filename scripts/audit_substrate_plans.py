@@ -146,6 +146,7 @@ def _pairwise_overlap(
                 "left_only_count": len(left_only),
                 "right_only_count": len(right_only),
                 "jaccard": len(intersection) / len(union) if union else 1.0,
+                "nesting_overlap": len(intersection) / len(left_set) if left_set else 1.0,
                 "left_subset_of_right": not left_only,
                 "right_subset_of_left": not right_only,
             }
@@ -265,8 +266,8 @@ def to_markdown(audit: dict[str, Any]) -> str:
             "",
             "## Pairwise Overlap",
             "",
-            "| Pair | Left pruned | Right pruned | Intersection | Left only | Right only | Jaccard | Left subset of right |",
-            "|---|---:|---:|---:|---:|---:|---:|---|",
+            "| Pair | Left pruned | Right pruned | Intersection | Left only | Right only | Jaccard | Nesting overlap | Left subset of right |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for pair_name, pair in audit["pairwise_overlap"].items():
@@ -274,8 +275,29 @@ def to_markdown(audit: dict[str, Any]) -> str:
             f"| {pair_name} | {pair['left_pruned_count']} | {pair['right_pruned_count']} | "
             f"{pair['intersection_count']} | {pair['left_only_count']} | "
             f"{pair['right_only_count']} | {_fmt_float(pair['jaccard'])} | "
+            f"{_fmt_float(pair.get('nesting_overlap'))} | "
             f"{pair['left_subset_of_right']} |"
         )
+
+    if audit.get("nested_validation"):
+        lines.extend(
+            [
+                "",
+                "## Adjacent Nested Ladder",
+                "",
+                "| Left target | Right target | Left pruned | Right pruned | Newly pruned | Left only | Nesting overlap | Nested |",
+                "|---:|---:|---:|---:|---:|---:|---:|---|",
+            ]
+        )
+        for pair in audit["nested_validation"].get("pairs", []):
+            lines.append(
+                f"| {_fmt_float(pair['left_target'], 2)} | "
+                f"{_fmt_float(pair['right_target'], 2)} | "
+                f"{pair['left_pruned_count']} | {pair['right_pruned_count']} | "
+                f"{pair['newly_pruned_count']} | {pair['left_only_count']} | "
+                f"{_fmt_float(pair['nesting_overlap'])} | "
+                f"{pair['left_subset_of_right']} |"
+            )
 
     plan_names = list(audit["plans"])
     lines.extend(["", "## Per-Layer Allocation", ""])

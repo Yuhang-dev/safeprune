@@ -323,6 +323,28 @@ is lower by about 45%, preserving the reflect-localized recovery story at a mean
 10% FFN pruning budget.
 ```
 
+### P1 hidden-state centroid baseline result
+
+P1 hidden-state 1000 已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Router-inclusive cost | Fallback step |
+|---|---:|---:|---:|---:|---:|---:|
+| Dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2.2066 | 0.0000 |
+| Identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 2.2066 | 0.0000 |
+| Observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 2.1886 | 0.1818 |
+| Stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 2.1918 | 0.0926 |
+| Hidden centroid | 980/1000 | 180/200 | 800/800 | 2.3093 | 4.6420 | 0.0000 |
+| Hidden centroid reflect-dense | 983/1000 | 183/200 | 800/800 | 2.2609 | 4.5437 | 0.0392 |
+| Hidden centroid + event | 996/1000 | 196/200 | 800/800 | 2.1918 | 4.4036 | 0.0926 |
+
+解读：
+
+```text
+hidden-state-only centroid 没有替代显式 Agent event。
+event hybrid 追平 stage-reflect-dense，但 router-inclusive cost 明显更高。
+因此 hidden-state P1 是审稿 baseline，主方法仍是显式 failure/reflect signal。
+```
+
 ### P1 hidden-state centroid baseline 命令
 
 P1 必须使用独立 calibration tasks，不能直接用冻结的 1000 条 eval tasks 拟合 centroid：

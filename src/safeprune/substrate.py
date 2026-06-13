@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from .pruning import ScoreWeights, select_pruned_indices
+from .pruning import ScoreWeights, combine_importance_scores, select_pruned_indices
 from .scoring import (
     FFNActivationStats,
     LayerScores,
@@ -169,6 +169,107 @@ def build_plan_from_budget(
     )
 
 
+def build_nested_global_budget_plans(
+    *,
+    scores: list[LayerScores],
+    target_budgets: list[float],
+    weights: ScoreWeights,
+    min_mlp_channels_per_layer: int,
+    plan_name_prefix: str,
+) -> dict[float, dict[str, Any]]:
+    """Build globally ranked FFN channel plans with nested pruned sets."""
+
+    if not target_budgets:
+        raise ValueError("At least one target budget is required.")
+    sorted_targets = sorted(float(target) for target in target_budgets)
+    if any(target < 0.0 or target >= 1.0 for target in sorted_targets):
+        raise ValueError("Target budgets must be in [0, 1).")
+
+    layer_meta: dict[int, dict[str, Any]] = {}
+    ranked_channels: list[tuple[float, int, int]] = []
+    total_channels = 0
+    for layer_scores in scores:
+        layer = int(layer_scores.layer)
+        importance = combine_importance_scores(
+            layer_scores.mlp,
+            layer_scores.activation_mlp or [0.0] * len(layer_scores.mlp),
+            layer_scores.loss_delta_mlp or [0.0] * len(layer_scores.mlp),
+            weights,
+        )
+        channel_count = len(importance)
+        max_prunable = max(0, channel_count - min_mlp_channels_per_layer)
+        layer_meta[layer] = {
+            "scores": layer_scores,
+            "num_mlp_channels": channel_count,
+            "max_prunable": max_prunable,
+        }
+        total_channels += channel_count
+        for channel, score in enumerate(importance):
+            ranked_channels.append((float(score), layer, channel))
+
+    ranked_channels.sort(key=lambda item: (item[0], item[1], item[2]))
+    pruned_by_layer: dict[int, set[int]] = {layer: set() for layer in layer_meta}
+    cursor = 0
+    plans: dict[float, dict[str, Any]] = {}
+
+    for target in sorted_targets:
+        target_pruned = math.ceil(total_channels * target)
+        while _total_pruned(pruned_by_layer) < target_pruned and cursor < len(ranked_channels):
+            _score, layer, channel = ranked_channels[cursor]
+            cursor += 1
+            if len(pruned_by_layer[layer]) >= layer_meta[layer]["max_prunable"]:
+                continue
+            pruned_by_layer[layer].add(channel)
+
+        plan = _plan_from_pruned_sets(
+            scores=scores,
+            pruned_by_layer=pruned_by_layer,
+            target=target,
+            total_channels=total_channels,
+            plan_name=f"{plan_name_prefix}_{_budget_slug(target)}",
+        )
+        plans[target] = plan
+
+    return plans
+
+
+def validate_nested_pruned_sets(plans: dict[float, dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted((float(target), plan) for target, plan in plans.items())
+    pairs = []
+    warnings = []
+    previous_target: float | None = None
+    previous_set: set[tuple[int, int]] | None = None
+    for target, plan in ordered:
+        current_set = _global_pruned_set(plan)
+        if previous_target is not None and previous_set is not None:
+            missing = previous_set - current_set
+            added = current_set - previous_set
+            overlap = (
+                len(previous_set & current_set) / len(previous_set)
+                if previous_set
+                else 1.0
+            )
+            pair = {
+                "left_target": previous_target,
+                "right_target": target,
+                "left_pruned_count": len(previous_set),
+                "right_pruned_count": len(current_set),
+                "newly_pruned_count": len(added),
+                "left_only_count": len(missing),
+                "nesting_overlap": overlap,
+                "left_subset_of_right": not missing,
+            }
+            pairs.append(pair)
+            if missing:
+                warnings.append(
+                    f"{_budget_slug(previous_target)} is not nested in "
+                    f"{_budget_slug(target)}: {len(missing)} missing channels"
+                )
+        previous_target = target
+        previous_set = current_set
+    return {"pairs": pairs, "warnings": warnings}
+
+
 def add_bias_compensation_to_plan(
     model,
     activation_stats: list[FFNActivationStats],
@@ -277,6 +378,71 @@ def _average_lm_loss(
     if not losses:
         raise ValueError("At least one prompt is required to compute loss.")
     return sum(losses) / len(losses)
+
+
+def _budget_slug(value: float) -> str:
+    return f"{value:.2f}".replace(".", "p")
+
+
+def _total_pruned(pruned_by_layer: dict[int, set[int]]) -> int:
+    return sum(len(channels) for channels in pruned_by_layer.values())
+
+
+def _plan_from_pruned_sets(
+    *,
+    scores: list[LayerScores],
+    pruned_by_layer: dict[int, set[int]],
+    target: float,
+    total_channels: int,
+    plan_name: str,
+) -> dict[str, Any]:
+    layers = []
+    allocation = {}
+    total_pruned = 0
+    for layer_scores in scores:
+        layer = int(layer_scores.layer)
+        pruned = sorted(pruned_by_layer.get(layer, set()))
+        channel_count = len(layer_scores.mlp)
+        total_pruned += len(pruned)
+        if pruned:
+            allocation[str(layer)] = len(pruned) / channel_count if channel_count else 0.0
+        layers.append(
+            {
+                "layer": layer_scores.layer,
+                "pruned_attention_heads": [],
+                "pruned_mlp_channels": pruned,
+                "num_attention_heads": len(layer_scores.attention),
+                "num_mlp_channels": channel_count,
+            }
+        )
+    actual_sparsity = total_pruned / total_channels if total_channels else 0.0
+    return {
+        "sparsity": target,
+        "global_target": target,
+        "estimated_loss_delta": None,
+        "name": plan_name,
+        "plan_name": plan_name,
+        "mask_type": "ffn_channel_forward_mask",
+        "allocation": allocation,
+        "layers": layers,
+        "budget_plan": {
+            "global_target": target,
+            "target_pruned_channels": math.ceil(total_channels * target),
+            "total_channels": total_channels,
+            "actual_sparsity": actual_sparsity,
+            "estimated_loss_delta": None,
+            "nested_global_rank": True,
+        },
+    }
+
+
+def _global_pruned_set(plan: dict[str, Any]) -> set[tuple[int, int]]:
+    result = set()
+    for layer in plan.get("layers", []):
+        layer_idx = int(layer.get("layer", layer.get("layer_idx", 0)))
+        for channel in layer.get("pruned_mlp_channels", []):
+            result.add((layer_idx, int(channel)))
+    return result
 
 
 def _budget_state_is_better(

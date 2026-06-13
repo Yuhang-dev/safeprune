@@ -70,6 +70,7 @@ class AnalyzeHiddenStateP1ResultsTests(unittest.TestCase):
         self.assertEqual(analysis["probe_cost_ratio"]["hidden_state_centroid_global_balanced_approx_0.01"], 3.0)
         self.assertIn("Hidden centroid", markdown)
         self.assertIn("Selected Pairwise", markdown)
+        self.assertIn("N/A", markdown)
 
 
 if __name__ == "__main__":

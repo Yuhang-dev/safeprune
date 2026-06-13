@@ -30,6 +30,7 @@ cost per successful task = total active FFN cost / successful tasks
 | Hidden-state centroid router | `[IN PROGRESS]` | smoke 已证明 event hybrid 能追平 stage-reflect-dense；1000 条正式结果待冻结。 |
 | FLAP-style substrate v2 | `[IN PROGRESS]` | 已构建 activation/Wanda/FLAP plans，并完成 controlled prompt PPL sanity。 |
 | Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
+| P2c adaptive budget routing | `[IN PROGRESS]` | 已新增 schema calibration、nested ladder builder、generation-type routing；下一步跑 100 smoke。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -328,6 +329,18 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 `substrate_flap_0p10_observe_failure_redense`。
 13. `[NEXT]` 做 P2c：schema-aware nested budget plans + stage-dependent substrate routing。
 14. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+
+P2c 已实现的入口：
+
+```text
+scripts/prepare_schema_calibration.py
+scripts/build_pruning_substrate_v2.py --nested-budget-ladder --schema-calibration-path
+scripts/evaluate_real_tool_loop.py methods:
+  nested_uniform_10
+  adaptive_A
+  adaptive_B15
+  adaptive_B20
+```
 
 ## 5. 必须对照
 

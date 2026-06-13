@@ -54,6 +54,10 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(row["generation_steps"], 2)
         self.assertEqual(row["tool_call_count"], 1)
         self.assertEqual(row["successful_tool_call_count"], 1)
+        self.assertEqual(
+            [trace["generation_type"] for trace in row["routing_trace"]],
+            ["tool_call_or_retry", "final_answer"],
+        )
 
     def test_numeric_final_answer_succeeds(self):
         row = run_real_tool_episode(
@@ -140,6 +144,12 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(row["routing_trace"][1]["stage"], "reflect")
 
     def test_timeout_triggers_dense_fallback_on_next_step(self):
+        seen_generation_types = []
+
+        def route_with_generation_type(stage, event, _messages, generation_type):
+            seen_generation_types.append(generation_type)
+            return _route(stage, event, _messages)
+
         row = run_real_tool_episode(
             task=_task(
                 fault_schedule=[
@@ -152,7 +162,7 @@ class AgentLoopTests(unittest.TestCase):
                 ]
             ),
             registry=default_tool_registry(),
-            route_fn=_route,
+            route_fn=route_with_generation_type,
             generate_fn=_SequenceGenerator(
                 [
                     '{"type":"tool_call","name":"calculator","arguments":{"expression":"2 + 3"}}',
@@ -165,6 +175,8 @@ class AgentLoopTests(unittest.TestCase):
         self.assertTrue(row["success"])
         self.assertEqual(row["dense_fallback_step_count"], 1)
         self.assertEqual(row["failure_events"], ["timeout"])
+        self.assertEqual(seen_generation_types[1], "reflect_recovery")
+        self.assertEqual(row["routing_trace"][1]["generation_type"], "reflect_recovery")
 
     def test_max_steps_exceeded(self):
         row = run_real_tool_episode(

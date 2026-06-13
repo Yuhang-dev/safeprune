@@ -182,6 +182,26 @@ dense fallback step 约少 45%。
 failure recovery 没有崩：195/200；generation_collapse_rate = 0。
 ```
 
+P1 hidden-state baseline 1000 也已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Router-inclusive cost | Fallback step |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2.2066 | 0.0000 |
+| observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 2.1886 | 0.1818 |
+| stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 2.1918 | 0.0926 |
+| hidden centroid | 980/1000 | 180/200 | 800/800 | 2.3093 | 4.6420 | 0.0000 |
+| hidden centroid reflect-dense | 983/1000 | 183/200 | 800/800 | 2.2609 | 4.5437 | 0.0392 |
+| hidden centroid + event | 996/1000 | 196/200 | 800/800 | 2.1918 | 4.4036 | 0.0926 |
+
+解释：
+
+```text
+hidden-state-only 不如显式 stage/event route。
+event hybrid 能追平 stage-reflect-dense，但要额外 hidden-state prefill，
+router-inclusive cost 约为 4.40，高于 stage-reflect-dense 的 2.19。
+因此 P1 是审稿 baseline，不是主方法。
+```
+
 当前下一步固定为：
 
 ```text
@@ -191,6 +211,18 @@ failure recovery 没有崩：195/200；generation_collapse_rate = 0。
 4. 后续 P2b/P2c 做 nested budget ladder + schema-aware calibration，修 5%/20%。
 5. 再实现 stage-dependent substrate routing：tool-call safe budget、answer aggressive budget、
    reflect dense，而不是继续跑统一 20%。
+```
+
+P2c 已新增代码入口：
+
+```text
+scripts/prepare_schema_calibration.py
+scripts/build_pruning_substrate_v2.py --nested-budget-ladder --schema-calibration-path
+scripts/evaluate_real_tool_loop.py methods:
+  nested_uniform_10
+  adaptive_A
+  adaptive_B15
+  adaptive_B20
 ```
 
 ## 1. 当前阶段
@@ -479,33 +511,89 @@ python scripts/prepare_real_tool_tasks.py \
   --failure-count 200
 ```
 
-10% Real Tool 1000 已经跑完。下面是历史复核命令；除非需要复现实验，
-不要重复跑同一配置，也不要加 5% 或 20%。
+当前主命令：P2c schema-aware nested budget + generation-type routing。
+
+生成 schema-heavy calibration snippets：
+
+```bash
+python scripts/prepare_schema_calibration.py \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --output data/agent/schema_calibration_v1.jsonl \
+  --max-tasks 500
+```
+
+构建 nested ladder：
+
+```bash
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --schema-calibration-path data/agent/schema_calibration_v1.jsonl \
+  --max-calibration-prompts 512 \
+  --max-schema-calibration-prompts 1500 \
+  --target-budgets 0.05,0.10,0.12,0.15,0.18,0.20 \
+  --score-methods flap \
+  --nested-budget-ladder \
+  --schema-token-weight 1.0 \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested
+```
+
+查看 nested audit：
+
+```bash
+cat outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/nested_budget_audit.md
+```
+
+跑 controlled prompt PPL sanity：
+
+```bash
+for b in 0p05 0p10 0p12 0p15 0p18 0p20; do
+  python scripts/evaluate_pruning_ppl.py \
+    --config configs/agent_qwen2_5_3b_4090.yaml \
+    --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_${b}.json \
+    --prompts-jsonl data/agent/controlled_tasks.jsonl \
+    --max-prompts 256 \
+    --local-files-only \
+    --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/ppl_${b}.json
+done
+```
+
+跑 4 组 Real Tool 100 smoke：
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
   --config configs/agent_qwen2_5_3b_4090.yaml \
-  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
   --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
   --local-files-only \
-  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
-  --substrate-name flap_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p05.json \
+  --substrate-name nested_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --substrate-name nested_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p15.json \
+  --substrate-name nested_0p15 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --substrate-name nested_0p20 \
   --methods \
     dense \
-    identity_hook \
-    substrate_flap_0p10_stage_reflect_dense \
-    substrate_flap_0p10_observe_failure_redense \
-  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
+    nested_uniform_10 \
+    adaptive_A \
+    adaptive_B15 \
+    adaptive_B20 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_smoke_100
 ```
 
-跑完后打印主指标：
+打印 smoke 主指标：
 
 ```bash
 python - <<'PY'
 import json
 from pathlib import Path
 
-p = Path("outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000_metrics.json")
+p = Path("outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_smoke_100_metrics.json")
 metrics = json.loads(p.read_text())
 keys = [
     "correct", "total", "failure_task_correct", "failure_task_total",
@@ -520,53 +608,20 @@ for method, row in metrics.items():
 PY
 ```
 
-可选：如果需要快速确认失败类型，再看 failures：
-
-```bash
-python - <<'PY'
-import json
-from collections import Counter, defaultdict
-from pathlib import Path
-
-p = Path("outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000_failures.jsonl")
-by_method_tool = defaultdict(Counter)
-events = defaultdict(Counter)
-for line in p.read_text().splitlines():
-    row = json.loads(line)
-    by_method_tool[row["method"]][row["tool"]] += 1
-    events[row["method"]].update(row.get("events", []))
-print("failed by tool")
-for method, counts in sorted(by_method_tool.items()):
-    print(method, dict(counts))
-print("events")
-for method, counts in sorted(events.items()):
-    print(method, dict(counts.most_common(8)))
-PY
-```
-
-## 6. 10% 1000 判断标准
+## 6. P2c smoke 判断标准
 
 先看：
 
 ```text
-dense 与 identity_hook 是否逐任务一致或近似一致
-dense / identity_hook 是否维持 Real Tool v1 水平
-substrate_flap_0p10_stage_reflect_dense 是否接近或超过 100-smoke 的趋势
-substrate_flap_0p10_observe_failure_redense 是否作为窗口式 redense 成本对照稳定
-collapse_rate 是否为 0
+overall >= 98/100
+failure >= 19/20
+unit_convert >= 32/33
+schema_validity >= 0.98
+fallback_step_ratio 明显低于 1
+generation_collapse_rate = 0
 ```
 
-再看：
-
-```text
-10% stage-reflect-dense 是否保持 non-failure 接近 dense
-10% stage-reflect-dense 是否在 failure subset 明显优于无 recovery sparse 路径
-10% stage-reflect-dense 是否比 10% observe-failure-redense 使用更少 fallback step
-cost_per_success 是否低于 dense 或至少明显优于 1% Real Tool v1 主线
-```
-
-若 dense / identity_hook 在 1000 中明显低于已冻结 Real Tool v1 水平，先检查任务文件、
-prompt/protocol 和远端环境，不要直接解释成 pruning 失败。
+若 `adaptive_B20` 不稳，补跑 `adaptive_B15` 即可；不要扩大到 1000。
 
 ## 7. 不要做
 

@@ -46,6 +46,10 @@ REAL_TOOL_METHODS = [
     "hidden_state_centroid_global_balanced_approx_0.01",
     "hidden_state_centroid_reflect_dense_global_balanced_approx_0.01",
     "hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01",
+    "nested_uniform_10",
+    "adaptive_A",
+    "adaptive_B15",
+    "adaptive_B20",
 ]
 DEFAULT_REAL_TOOL_METHODS = [
     "dense",
@@ -64,6 +68,13 @@ class RoutingPolicy:
     base_mode: str
     reflect_mode: str
     failure_window_mode: str = "normal"
+
+
+@dataclass(frozen=True)
+class GenerationRoutingPolicy:
+    tool_call_plan_key: str
+    answer_plan_key: str
+    reflect_mode: str = "dense"
 
 
 def _artifact_paths(output_prefix: str) -> tuple[Path, Path, Path, Path, Path]:
@@ -210,7 +221,13 @@ class _MethodRuntime:
     def reset(self) -> None:
         self.failure_router = None
 
-    def route(self, stage: str, event: str, messages: list[dict[str, str]]) -> RouteOutcome:
+    def route(
+        self,
+        stage: str,
+        event: str,
+        messages: list[dict[str, str]],
+        generation_type: str | None = None,
+    ) -> RouteOutcome:
         if self.spec["mode"] == "static":
             plan = self.spec["plan"]
             self._set_plan(plan)
@@ -242,6 +259,9 @@ class _MethodRuntime:
 
         if self.spec["mode"] == "routing_policy":
             return self._route_policy(stage, event)
+
+        if self.spec["mode"] == "generation_type_policy":
+            return self._route_generation_type_policy(stage, event, generation_type or stage)
 
         if self.spec["mode"] == "hidden_state_centroid":
             return self._route_hidden_centroid(stage, event, messages)
@@ -356,6 +376,50 @@ class _MethodRuntime:
             plan_name = self.spec.get("stage_plan_names", {}).get(selected_stage, selected_stage)
             return selected_stage, plan_name, self.spec["stage_plans"][selected_stage]
         raise ValueError(f"Unsupported routing policy mode: {mode}")
+
+    def _route_generation_type_policy(
+        self,
+        stage: str,
+        event: str,
+        generation_type: str,
+    ) -> RouteOutcome:
+        policy: GenerationRoutingPolicy = self.spec["generation_policy"]
+        if generation_type == "reflect_recovery" and policy.reflect_mode == "dense":
+            plan_key = "dense"
+            plan = self.spec["fallback_plan"]
+            selected_stage = "dense_fallback"
+            selected_plan_name = "reflect_dense"
+        elif generation_type == "final_answer":
+            plan_key = policy.answer_plan_key
+            plan = self.spec["budget_plans"][plan_key]
+            selected_stage = "final_answer"
+            selected_plan_name = self.spec["budget_plan_names"][plan_key]
+        else:
+            plan_key = policy.tool_call_plan_key
+            plan = self.spec["budget_plans"][plan_key]
+            selected_stage = "tool_call_or_retry"
+            selected_plan_name = self.spec["budget_plan_names"][plan_key]
+
+        self._set_plan(plan)
+        return RouteOutcome(
+            selected_stage=selected_stage,
+            selected_plan_name=selected_plan_name,
+            reason="generation_type_policy",
+            active_ffn_ratio=active_mlp_ratio_from_plan(plan),
+            plan=plan,
+            metadata={
+                "generation_type": generation_type,
+                "event_before": event,
+                "stage": stage,
+                "policy": policy.__dict__,
+                "selected_budget_key": plan_key,
+                "tool_call_budget": policy.tool_call_plan_key,
+                "answer_budget": policy.answer_plan_key,
+                "fallback_remaining_before": 0,
+                "fallback_remaining_after": 0,
+                **_plan_diagnostics(plan),
+            },
+        )
 
     def _route_hidden_centroid(
         self,
@@ -529,6 +593,17 @@ def _infer_substrate_name(plan_path: str | Path) -> str:
     return "".join(char if char.isalnum() else "_" for char in raw).strip("_")
 
 
+def _budget_slug_from_plan(plan: dict[str, Any]) -> str | None:
+    budget_plan = plan.get("budget_plan") or {}
+    target = budget_plan.get("global_target", plan.get("global_target", plan.get("sparsity")))
+    if target is None:
+        return None
+    try:
+        return f"{float(target):.2f}".replace(".", "p")
+    except (TypeError, ValueError):
+        return None
+
+
 def _register_substrate_specs(
     specs: dict[str, dict[str, Any]],
     *,
@@ -562,6 +637,54 @@ def _register_substrate_specs(
             "policy": RoutingPolicy("observe", "observe", "dense"),
             **common,
         }
+    _register_generation_type_specs(
+        specs,
+        substrate_plans=substrate_plans,
+        identity_plan=identity_plan,
+    )
+
+
+def _register_generation_type_specs(
+    specs: dict[str, dict[str, Any]],
+    *,
+    substrate_plans: list[tuple[str, dict[str, Any], str]],
+    identity_plan: dict[str, Any],
+) -> None:
+    by_budget: dict[str, tuple[str, dict[str, Any], str]] = {}
+    for name, plan, plan_path in substrate_plans:
+        slug = _budget_slug_from_plan(plan)
+        if slug is not None:
+            by_budget[slug] = (name, plan, plan_path)
+    required = {"0p05", "0p10", "0p15", "0p20"}
+    if not required.issubset(by_budget):
+        return
+
+    budget_plans = {key: by_budget[key][1] for key in required}
+    budget_plan_names = {key: by_budget[key][0] for key in required}
+    budget_plan_paths = {key: by_budget[key][2] for key in required}
+    common = {
+        "mode": "generation_type_policy",
+        "budget_plans": budget_plans,
+        "budget_plan_names": budget_plan_names,
+        "budget_plan_paths": budget_plan_paths,
+        "fallback_plan": identity_plan,
+    }
+    specs["nested_uniform_10"] = {
+        **common,
+        "generation_policy": GenerationRoutingPolicy("0p10", "0p10", "dense"),
+    }
+    specs["adaptive_A"] = {
+        **common,
+        "generation_policy": GenerationRoutingPolicy("0p05", "0p15", "dense"),
+    }
+    specs["adaptive_B15"] = {
+        **common,
+        "generation_policy": GenerationRoutingPolicy("0p10", "0p15", "dense"),
+    }
+    specs["adaptive_B20"] = {
+        **common,
+        "generation_policy": GenerationRoutingPolicy("0p10", "0p20", "dense"),
+    }
 
 
 def _load_substrate_plans(
@@ -642,6 +765,22 @@ def _plans_manifest(specs: dict[str, dict[str, Any]], methods: list[str]) -> dic
                     stage: _real_plan_summary(plan)
                     for stage, plan in sorted(spec["stage_plans"].items())
                 },
+            }
+            continue
+        if spec["mode"] == "generation_type_policy":
+            policy: GenerationRoutingPolicy = spec["generation_policy"]
+            manifest[method] = {
+                "mode": "generation_type_policy",
+                "policy": policy.__dict__,
+                "tool_call_or_retry": _real_plan_summary(
+                    spec["budget_plans"][policy.tool_call_plan_key]
+                ),
+                "final_answer": _real_plan_summary(
+                    spec["budget_plans"][policy.answer_plan_key]
+                ),
+                "reflect_recovery": _real_plan_summary(spec["fallback_plan"]),
+                "budget_plan_names": spec["budget_plan_names"],
+                "budget_plan_paths": spec["budget_plan_paths"],
             }
             continue
         if spec["mode"] != "hidden_state_centroid":

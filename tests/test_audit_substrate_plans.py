@@ -54,6 +54,7 @@ class AuditSubstratePlansTests(unittest.TestCase):
         pair = audit["pairwise_overlap"]["flap_0p03_vs_flap_0p05"]
         self.assertTrue(pair["left_subset_of_right"])
         self.assertEqual(pair["intersection_count"], 2)
+        self.assertAlmostEqual(pair["nesting_overlap"], 1.0)
         self.assertIn("Substrate Plan Audit", markdown)
         self.assertIn("Duplicate idx", markdown)
 
@@ -75,6 +76,39 @@ class AuditSubstratePlansTests(unittest.TestCase):
             audit["pairwise_overlap"]["flap_0p03_vs_flap_0p05"]["left_subset_of_right"]
         )
         self.assertTrue(any("not nested" in warning for warning in audit["warnings"]))
+
+    def test_markdown_includes_adjacent_nested_ladder_section(self):
+        plan_5 = {
+            "layers": [
+                {"layer": 0, "num_mlp_channels": 10, "pruned_mlp_channels": [1]},
+            ],
+        }
+        plan_10 = {
+            "layers": [
+                {"layer": 0, "num_mlp_channels": 10, "pruned_mlp_channels": [1, 2]},
+            ],
+        }
+        audit = audit_plans({"flap_0p05": plan_5, "flap_0p10": plan_10})
+        audit["nested_validation"] = {
+            "pairs": [
+                {
+                    "left_target": 0.05,
+                    "right_target": 0.10,
+                    "left_pruned_count": 1,
+                    "right_pruned_count": 2,
+                    "newly_pruned_count": 1,
+                    "left_only_count": 0,
+                    "nesting_overlap": 1.0,
+                    "left_subset_of_right": True,
+                }
+            ],
+            "warnings": [],
+        }
+
+        markdown = to_markdown(audit)
+
+        self.assertIn("Adjacent Nested Ladder", markdown)
+        self.assertIn("Newly pruned", markdown)
 
 
 if __name__ == "__main__":

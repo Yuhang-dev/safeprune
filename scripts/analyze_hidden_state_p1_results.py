@@ -157,6 +157,12 @@ def _probe_cost_ratio(metrics: dict[str, Any]) -> dict[str, float | None]:
     return ratios
 
 
+def _fmt_cell(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    return str(value)
+
+
 def to_markdown(analysis: dict[str, Any]) -> str:
     lines = ["# Hidden-State P1 Analysis", ""]
     lines.extend(
@@ -170,7 +176,9 @@ def to_markdown(analysis: dict[str, Any]) -> str:
             "| {label} | {success} | {failure_success} | {non_failure_success} | "
             "{raw_reflect_recall} | {effective_reflect_redense_recall} | "
             "{critical_reflect_miss_rate} | {fallback_step_ratio} | "
-            "{routing_probe_cost} | {inclusive_cost_per_success} |".format(**row)
+            "{routing_probe_cost} | {inclusive_cost_per_success} |".format(
+                **{key: _fmt_cell(value) for key, value in row.items()}
+            )
         )
     lines.extend(["", "## Detector Confusion", ""])
     lines.extend(["| Method | TP | FN | FP | TN |", "|---|---:|---:|---:|---:|"])
