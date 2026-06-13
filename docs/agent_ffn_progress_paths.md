@@ -146,6 +146,33 @@ routing_probe_latency_ms
 effective_cost_per_success
 ```
 
+P2 pruning substrate v2 已接入 Real Tool runner。当前结论：
+
+```text
+controlled-task prompt PPL sanity 显示 3% / 5% / 10% / 20% 均未 collapse。
+Real Tool 100 smoke 显示 3% 和 10% 通过，5% 是异常档位。
+```
+
+P2 Real Tool 100 smoke：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 |
+| flap 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 |
+| flap 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 |
+| flap 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 |
+| flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 |
+| flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 |
+
+下一步：
+
+```text
+不要跑 5% 1000。
+先分析 5% layer allocation / failure trace。
+10% stage-reflect-dense 是当前主候选，3% 是安全对照。
+20% 只作为 pressure smoke。
+```
+
 ## 1. 已完成路径
 
 ### 1.1 主线文档切换

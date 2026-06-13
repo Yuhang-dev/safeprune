@@ -239,6 +239,50 @@ task success / failure recovery
 
 Real Tool v1 到此冻结，不继续补同配置 1000 条。
 
+## 10. Post-v1 addendum: P2 substrate status
+
+Real Tool v1 冻结后，P2 已经从 1% mask-hook 机制验证推进到
+FLAP-style substrate v2，并接入外部 substrate plan：
+
+```text
+scripts/build_pruning_substrate_v2.py
+scripts/evaluate_pruning_ppl.py
+scripts/evaluate_real_tool_loop.py --substrate-plan / --substrate-name
+```
+
+controlled-task prompt PPL sanity：
+
+| Plan | Active MLP ratio | PPL | Relative PPL increase |
+|---|---:|---:|---:|
+| dense | 1.0000 | 23.2031 | 0.00% |
+| flap 3% | 0.9697 | 23.6021 | +1.72% |
+| flap 5% | 0.9497 | 23.6440 | +1.90% |
+| flap 10% | 0.8998 | 24.7785 | +6.79% |
+| flap 20% | 0.7998 | 24.0066 | +3.46% |
+
+Real Tool substrate smoke：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 |
+| flap 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 |
+| flap 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 |
+| flap 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 |
+| flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 |
+| flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 |
+
+当前 P2 判断：
+
+```text
+3% 是安全档位。
+10% 是当前主候选档位，已经在 Real Tool smoke 中接近 dense，并降低 cost_per_success。
+5% 是 allocation anomaly：PPL 好，但 Agent loop 明显退化，不能直接进 1000。
+10% 下 stage-reflect-dense 优于 observe-failure-redense 的成本形态，因为 fallback step 更少。
+```
+
+这不改变 Real Tool v1 的冻结结论；它说明下一阶段论文结果应围绕
+`substrate_flap_0p10_stage_reflect_dense` 继续验证。
+
 ### P1 hidden-state centroid baseline 命令
 
 P1 必须使用独立 calibration tasks，不能直接用冻结的 1000 条 eval tasks 拟合 centroid：

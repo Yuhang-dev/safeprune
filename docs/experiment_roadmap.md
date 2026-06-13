@@ -27,9 +27,9 @@ cost per successful task = total active FFN cost / successful tasks
 | Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
 | Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
-| Hidden-state centroid router | `[IN PROGRESS]` | 加入 pure centroid、centroid reflect-dense、centroid+event hybrid 三个审稿基线。 |
-| FLAP-style substrate v2 | `[IN PROGRESS]` | 升级底层 FFN scoring、global layer-wise budget 和 compensation。 |
-| Budget ladder | `[NEXT]` | 在 substrate v2 上推进 3% / 5% / 10% global FFN budget。 |
+| Hidden-state centroid router | `[IN PROGRESS]` | smoke 已证明 event hybrid 能追平 stage-reflect-dense；1000 条正式结果待冻结。 |
+| FLAP-style substrate v2 | `[IN PROGRESS]` | 已构建 activation/Wanda/FLAP plans，并完成 controlled prompt PPL sanity。 |
+| Budget ladder | `[IN PROGRESS]` | 3% / 10% Real Tool smoke 通过；5% 出现 allocation anomaly，不能直接进 1000。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -107,6 +107,41 @@ Real Tool v1 冻结策略：
 | `stage_global_balanced_approx_0.01` | stage-aware baseline | non-failure 稳定，但 failure recovery 弱于 observe-only。 |
 
 当前底层 mask 仍是约 1% global FFN budget。后续 3% / 5% / 10% 需要先升级 layer-wise budget 和 compensation，不直接恢复旧的 10%/20%/30% per-layer stage sparsity。
+
+P2 substrate v2 已经把 controlled prompt PPL sanity 推到 20%：
+
+| Plan | Active MLP ratio | PPL | Relative PPL increase |
+|---|---:|---:|---:|
+| dense | 1.0000 | 23.2031 | 0.00% |
+| flap 3% | 0.9697 | 23.6021 | +1.72% |
+| flap 5% | 0.9497 | 23.6440 | +1.90% |
+| flap 10% | 0.8998 | 24.7785 | +6.79% |
+| flap 20% | 0.7998 | 24.0066 | +3.46% |
+
+这组结果只说明 substrate v2 在 controlled-task prompt PPL 上没有 collapse；
+论文仍需补标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy。
+
+P2 Real Tool 100 smoke 最新结果：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Collapse |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 | 0.0000 |
+| flap 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 | 0.0000 |
+| flap 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 | 0.0000 |
+| flap 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 | 0.0000 |
+| flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 | 0.0000 |
+| flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 | 0.0000 |
+
+结论：
+
+```text
+3% 是安全档位。
+10% 是当前主论文候选档位：Real Tool smoke 接近 dense，cost_per_success 低于 dense。
+5% 不是保守档位，而是异常档位；PPL 很好但 Agent loop 大幅退化，
+需要优先检查 layer allocation 和 failure trace。
+10% 下 stage-reflect-dense 与 observe-failure-redense 同为 99/100，
+但 stage-reflect-dense fallback step ratio 更低，因此优先作为 10% 主方法。
+```
 
 ## 4. 实验顺序
 
@@ -200,7 +235,7 @@ python scripts/build_pruning_substrate_v2.py \
   --output-dir outputs/agent_qwen2_5_3b_4090_low/substrate_v2
 ```
 
-8. `[NEXT]` 对 substrate v2 plans 做 PPL sanity：
+8. `[DONE]` 对 substrate v2 plans 做 controlled prompt PPL sanity：
 
 ```bash
 python scripts/evaluate_pruning_ppl.py \
@@ -212,8 +247,41 @@ python scripts/evaluate_pruning_ppl.py \
   --output outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/ppl_0p05.json
 ```
 
-9. `[NEXT]` 把通过静态 sanity 的 3% / 5% / 10% 接回 Real Tool 100 smoke。
-10. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+9. `[DONE]` 把通过静态 sanity 的 3% / 5% / 10% 接回 Real Tool 100 smoke：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --substrate-name flap_0p03 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --substrate-name flap_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    substrate_flap_0p03_stage_reflect_dense \
+    substrate_flap_0p05_stage_reflect_dense \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p05_observe_failure_redense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
+```
+
+10. `[NEXT]` 先分析 5% anomaly，不跑 5% 1000：
+
+```text
+检查 budget_plan_0p05.json 的 layer allocation。
+抽取 5% stage-reflect-dense / observe-failure-redense 失败 trace。
+确认是否某些关键层被 5% allocation 误剪，或 bias compensation 在某些层引入过强偏置。
+```
+
+11. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000；3% 可作为安全对照。
+12. `[OPTIONAL]` 单独加入 20% pressure smoke，但不直接作为正式主结果。
+13. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 

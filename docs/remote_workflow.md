@@ -224,6 +224,18 @@ python scripts/evaluate_pruning_ppl.py \
 ```
 
 只有通过 PPL sanity 的 `3% / 5% / 10%` plan 才接回 Real Tool 100 smoke。
+当前 PPL sanity 是 controlled-task prompt sanity，不是 WikiText-2：
+
+| Plan | Active MLP ratio | PPL | Relative PPL increase |
+|---|---:|---:|---:|
+| dense | 1.0000 | 23.2031 | 0.00% |
+| flap 3% | 0.9697 | 23.6021 | +1.72% |
+| flap 5% | 0.9497 | 23.6440 | +1.90% |
+| flap 10% | 0.8998 | 24.7785 | +6.79% |
+| flap 20% | 0.7998 | 24.0066 | +3.46% |
+
+`flap` plans 已包含 bias compensation；layer scale 目前只是 `1.0`
+placeholder，尚未做真实 scale calibration。
 
 ### P2 Real Tool smoke with external substrate plans
 
@@ -251,7 +263,75 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
 ```
 
-如果这组稳定，再把 `0p20` 作为压力 smoke 单独加进去。
+这组已经跑完，结果如下：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Collapse |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 | 0.0000 |
+| substrate_flap_0p03_stage_reflect_dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 | 0.0000 |
+| substrate_flap_0p05_stage_reflect_dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 | 0.0000 |
+| substrate_flap_0p10_stage_reflect_dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 | 0.0000 |
+| substrate_flap_0p05_observe_failure_redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 | 0.0000 |
+| substrate_flap_0p10_observe_failure_redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 | 0.0000 |
+
+结论：
+
+```text
+3% and 10% pass smoke.
+10% is the current main candidate because it keeps 99/100 success and reduces
+cost_per_success versus dense.
+5% is anomalous: it has good controlled-prompt PPL but poor Agent success and a
+large fallback step ratio. Do not run 5% 1000 before inspecting allocation and
+failures.
+At 10%, prefer stage-reflect-dense over observe-failure-redense because both are
+99/100, but stage-reflect-dense uses fewer fallback steps.
+```
+
+下一步先看 5% 的 layer allocation 是否误伤关键层：
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+base = Path("outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap")
+for name in ["0p03", "0p05", "0p10", "0p20"]:
+    plan = json.loads((base / f"budget_plan_{name}.json").read_text())
+    layers = plan["layers"]
+    total = sum(layer["num_mlp_channels"] for layer in layers)
+    pruned = sum(len(layer.get("pruned_mlp_channels", [])) for layer in layers)
+    alloc = [
+        (layer["layer_idx"], len(layer.get("pruned_mlp_channels", [])) / layer["num_mlp_channels"])
+        for layer in layers
+        if len(layer.get("pruned_mlp_channels", [])) > 0
+    ]
+    print(name, "actual_sparsity", round(pruned / total, 6), "active", round(1 - pruned / total, 6))
+    print("  allocation:", " ".join(f"L{i}:{r:.2f}" for i, r in alloc))
+PY
+```
+
+如果确认 5% 是坏 allocation 而不是 runner bug，下一步以 10% 为主候选跑
+1000，3% 作为安全对照：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --substrate-name flap_0p03 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --substrate-name flap_0p10 \
+  --methods \
+    dense \
+    substrate_flap_0p03_stage_reflect_dense \
+    substrate_flap_0p10_stage_reflect_dense \
+    substrate_flap_0p10_observe_failure_redense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_1000
+```
+
+`0p20` 只作为后续 pressure smoke 单独加，不直接进入正式 1000 主表。
 
 ### Historical v1 commands
 

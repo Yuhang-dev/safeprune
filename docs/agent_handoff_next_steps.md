@@ -63,14 +63,66 @@ failure / reflect 轨迹信号可以定位高价值计算步骤。
 ```text
 scripts/build_pruning_substrate_v2.py
 scripts/evaluate_pruning_ppl.py
+scripts/evaluate_real_tool_loop.py --substrate-plan / --substrate-name
 ```
 
-P2 第一阶段目标：
+P2 第一阶段目标已经完成：
 
 ```text
 不要继续手工调 1%。
-先构建 activation / Wanda-channel / FLAP-style 的 1/3/5/10/20% budget plans。
-再做 PPL sanity，只有通过的 3/5/10% plan 才接回 Real Tool 100 smoke。
+已构建 activation / Wanda-channel / FLAP-style 的 1/3/5/10/20% budget plans。
+已完成 controlled prompt PPL sanity，并把 3/5/10% 接回 Real Tool 100 smoke。
+```
+
+P2 controlled prompt PPL sanity 已完成：
+
+| Plan | Active MLP ratio | PPL | Relative PPL increase |
+|---|---:|---:|---:|
+| dense | 1.0000 | 23.2031 | 0.00% |
+| flap 3% | 0.9697 | 23.6021 | +1.72% |
+| flap 5% | 0.9497 | 23.6440 | +1.90% |
+| flap 10% | 0.8998 | 24.7785 | +6.79% |
+| flap 20% | 0.7998 | 24.0066 | +3.46% |
+
+注意：
+
+```text
+这不是标准 WikiText-2 PPL，而是 controlled-task prompt PPL sanity。
+flap plans 已包含 bias compensation。
+layer scale 目前只是 1.0 placeholder，还没有做真正 scale calibration。
+20% PPL 不比 10% 差，说明 global layer-wise allocation 不是简单单调剪枝；
+但 20% 仍先作为压力 smoke，不直接进正式 1000。
+```
+
+P2 Real Tool 100 smoke 已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Collapse |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 | 0.0000 |
+| flap 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 | 0.0000 |
+| flap 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 | 0.0000 |
+| flap 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 | 0.0000 |
+| flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 | 0.0000 |
+| flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 | 0.0000 |
+
+当前判断：
+
+```text
+3% 已通过，是安全档位。
+10% 已通过，是当前主论文候选档位；stage-reflect-dense 达到 99/100，
+failure subset 19/20，cost_per_success 低于 dense。
+5% 是异常档位；PPL 很好但 Real Tool smoke 大幅退化，不能跑 5% 1000。
+10% 下 stage-reflect-dense 比 observe-failure-redense fallback step ratio 更低，
+因此优先作为 P2 主方法。
+```
+
+当前下一步：
+
+```text
+1. 检查 5% budget_plan_0p05.json 的 layer allocation 和失败 trace。
+2. 若确认不是 runner bug，跑 10% 1000，3% 作为安全对照。
+3. 20% 只做 pressure smoke，不直接进入正式主表。
+4. P1 hidden-state 1000 跑完后冻结到文档。
 ```
 
 ## 1. 当前阶段

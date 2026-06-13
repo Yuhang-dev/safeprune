@@ -214,6 +214,29 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_smoke_100
 ```
 
+Latest P2 substrate smoke result:
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 |
+| substrate flap 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 |
+| substrate flap 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 |
+| substrate flap 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 |
+| substrate flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 |
+| substrate flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 |
+
+Interpretation:
+
+```text
+3% and 10% pass the Real Tool smoke.
+10% is the current main P2 candidate: near-dense success with lower active FFN
+cost per success than dense.
+5% is an allocation anomaly despite good controlled-prompt PPL; do not run a
+5% 1000-task eval before inspecting its layer allocation and failure traces.
+At 10%, stage-reflect-dense is preferred over observe-failure-redense because it
+has the same 99/100 success with lower fallback step ratio.
+```
+
 Run local unit tests:
 
 ```bash
