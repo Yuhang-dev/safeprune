@@ -152,6 +152,8 @@ P2 pruning substrate v2 已接入 Real Tool runner。当前结论：
 controlled-task prompt PPL sanity 显示 3% / 5% / 10% / 20% 均未 collapse。
 Real Tool 100 smoke 显示 3% 和 10% 通过，5% 是异常档位。
 20% pressure smoke 已失败，主要表现为 unit_convert 0/33 和 schema_validity_rate 0.5247。
+10% Real Tool 1000 已完成：stage-reflect-dense 达到 990/1000，failure 195/200，
+cost_per_success 从 dense 的 2.2066 降到 2.0777。
 ```
 
 P2 Real Tool 100 smoke：
@@ -165,14 +167,23 @@ P2 Real Tool 100 smoke：
 | flap 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 |
 | flap 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 |
 
+P2 Real Tool 1000：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| flap 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 0.1156 |
+| flap 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 0.2114 |
+
 下一步：
 
 ```text
 不要跑 5% 1000。
-先用 scripts/audit_substrate_plans.py 分析 5% layer allocation、plan nesting、
-overlap、重复/越界 index、bias compensation norm 和 failure trace。
-10% stage-reflect-dense 是当前主候选，3% 是安全对照。
+10% stage-reflect-dense 已完成正式 1000，是当前 P2 主结果。
 20% 不进入 1000 主表。
+后续做 schema-aware nested budget plans，并实现 stage-dependent substrate routing：
+tool-call generation 用 safe budget，answer generation 用 higher budget，reflect 用 dense。
 ```
 
 ## 1. 已完成路径
@@ -877,4 +888,4 @@ logs/*.log
 
 ## 6. 一句话结论
 
-目前项目已经完成了从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的主线切换，并完成了 controlled mask validation v1：Qwen2.5-3B 对 naive full per-layer FFN channel masking 很敏感，但基于 layer sensitivity 的 global layer-wise allocation 能把同样约 1% active FFN budget 下的结果从 full 1% 的 86/100 提升到 95/100；进一步的 1000 条 controlled 结果显示 stage-aware routing 在同样 active FFN ratio 下比 observe-only 多成功 62 条，failure re-densification 在 failure subset 上追平 dense。这个结果已经冻结到 `docs/controlled_mask_validation_v1.md`。当前阶段已经进入 Real Tool-Execution Agent Prune v1：真实工具协议、本地 calculator/unit_convert/lookup 工具、自然闭环 runner、real tool eval 脚本和 hidden-state centroid baseline 已实现，远端已生成 100 条 smoke task，下一步是用 `PYTHONPATH=$PWD:$PWD/src` 重跑 real tool smoke，并检查 dense/identity、schema validity、task success、stage-aware vs observe-only、failure-redense recovery。
+目前项目已经完成从旧 SafePrune-DPO 到 Agent FFN 动态剪枝的主线切换，并冻结了 controlled mask validation v1 与 Real Tool-Execution Agent Prune v1。Real Tool v1 的主结论是：failure recovery 是局部 reflect-step 计算瓶颈，failure / reflect 轨迹信号可以用更少 fallback step 恢复鲁棒性。P2 substrate v2 已把底层 FFN 剪枝从 1% 推到 10% 正式 1000：`substrate_flap_0p10_stage_reflect_dense` 达到 990/1000、failure 195/200，cost_per_success 从 dense 的 2.2066 降到 2.0777；但它不是无损，且 20% 会破坏 tool schema。下一步是做 schema-aware nested budget plans 与 stage-dependent substrate routing，而不是继续跑统一 20%。

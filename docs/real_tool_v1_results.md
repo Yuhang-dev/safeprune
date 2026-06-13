@@ -285,6 +285,44 @@ schema_validity_rate 0.5247；不进入正式 1000 主表。
 这不改变 Real Tool v1 的冻结结论；它说明下一阶段论文结果应围绕
 `substrate_flap_0p10_stage_reflect_dense` 继续验证。
 
+### P2 10% Real Tool 1000 result
+
+10% substrate 正式 1000 条已完成：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000*
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Fallback step ratio | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 |
+| Identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 |
+| Substrate flap 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 2056.9205 | 0.1156 | 0.9876 |
+| Substrate flap 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 2077.6726 | 0.2114 | 0.9876 |
+
+Pairwise against dense:
+
+| Pair | Split | Both correct | Dense only | Substrate only | Both wrong |
+|---|---|---:|---:|---:|---:|
+| dense vs 10% stage-reflect-dense | all | 987 | 10 | 3 | 0 |
+| dense vs 10% stage-reflect-dense | failure | 192 | 5 | 3 | 0 |
+| dense vs 10% stage-reflect-dense | non-failure | 795 | 5 | 0 | 0 |
+| dense vs 10% observe-failure-redense | all | 987 | 10 | 3 | 0 |
+| dense vs 10% observe-failure-redense | failure | 192 | 5 | 3 | 0 |
+| dense vs 10% observe-failure-redense | non-failure | 795 | 5 | 0 | 0 |
+
+Interpretation:
+
+```text
+10% stage-reflect-dense is not lossless: success drops from 997/1000 to 990/1000.
+It is still stable: no generation collapse, failure recovery remains 195/200,
+and schema validity remains 0.9876.
+It reduces cost_per_success by about 5.8% versus dense and active_ffn_cost by about 6.5%.
+Compared with 10% observe-failure-redense, task success is identical but fallback step ratio
+is lower by about 45%, preserving the reflect-localized recovery story at a meaningful
+10% FFN pruning budget.
+```
+
 ### P1 hidden-state centroid baseline 命令
 
 P1 必须使用独立 calibration tasks，不能直接用冻结的 1000 条 eval tasks 拟合 centroid：

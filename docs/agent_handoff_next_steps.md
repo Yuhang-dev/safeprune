@@ -162,15 +162,35 @@ tool protocol 严格拒绝 {"type":"unit_convert", ...} 是正确行为；
 全量单测通过：76 tests OK, 3 skipped。
 ```
 
+P2 10% Real Tool 1000 已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| substrate flap 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 0.1156 | 0.9876 |
+| substrate flap 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 0.2114 | 0.9876 |
+
+关键解释：
+
+```text
+10% stage-reflect-dense 比 dense 少 7 条成功任务：997 -> 990。
+但 cost_per_success 从 2.2066 降到 2.0777，约降低 5.8%。
+active_ffn_cost 从 2200.0 降到 2056.9，约降低 6.5%。
+与 observe-failure-redense 相比，成功率相同，但 fallback step ratio 从 0.2114 降到 0.1156，
+dense fallback step 约少 45%。
+failure recovery 没有崩：195/200；generation_collapse_rate = 0。
+```
+
 当前下一步固定为：
 
 ```text
 1. 不跑 5% 1000。
 2. 不跑 20% 1000。
-3. 跑 10% Real Tool 1000 主线。
-4. 1000 方法只保留 dense、identity_hook、substrate_flap_0p10_stage_reflect_dense、
-   substrate_flap_0p10_observe_failure_redense。
-5. 后续 P2b 再做 nested budget ladder + agent-aware calibration，修 5%/20%。
+3. 10% Real Tool 1000 已经完成，可冻结为 P2 当前主结果。
+4. 后续 P2b/P2c 做 nested budget ladder + schema-aware calibration，修 5%/20%。
+5. 再实现 stage-dependent substrate routing：tool-call safe budget、answer aggressive budget、
+   reflect dense，而不是继续跑统一 20%。
 ```
 
 ## 1. 当前阶段
@@ -459,7 +479,8 @@ python scripts/prepare_real_tool_tasks.py \
   --failure-count 200
 ```
 
-当前主命令：跑 10% Real Tool 1000。不要加 5%，不要加 20%。
+10% Real Tool 1000 已经跑完。下面是历史复核命令；除非需要复现实验，
+不要重复跑同一配置，也不要加 5% 或 20%。
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -569,7 +590,7 @@ prompt/protocol 和远端环境，不要直接解释成 pruning 失败。
 然后继续 P2：
 5% allocation anomaly 已完成 audit；
 20% pressure smoke 已失败；
-现在只跑 10% Real Tool 1000，方法为 dense、identity_hook、
-substrate_flap_0p10_stage_reflect_dense、
-substrate_flap_0p10_observe_failure_redense。
+10% Real Tool 1000 已完成，substrate_flap_0p10_stage_reflect_dense 为当前 P2 主结果；
+下一步实现 schema-aware nested budget plans 和 stage-dependent substrate routing，
+不要继续跑统一 20%。
 ```

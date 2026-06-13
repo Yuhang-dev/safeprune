@@ -29,7 +29,7 @@ cost per successful task = total active FFN cost / successful tasks
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
 | Hidden-state centroid router | `[IN PROGRESS]` | smoke 已证明 event hybrid 能追平 stage-reflect-dense；1000 条正式结果待冻结。 |
 | FLAP-style substrate v2 | `[IN PROGRESS]` | 已构建 activation/Wanda/FLAP plans，并完成 controlled prompt PPL sanity。 |
-| Budget ladder | `[IN PROGRESS]` | 10% Real Tool smoke 通过并进入 1000；5% 是 allocation anomaly，20% pressure smoke 失败。 |
+| Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -164,6 +164,25 @@ unit_convert = 0/33
 ```text
 未发现会把 20% 误判为失败的 runner / parser / metrics bug。
 20% 失败是 tool protocol / schema 控制能力被破坏，不进入 1000 主表。
+```
+
+P2 10% Real Tool 1000 正式结果：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| substrate flap 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 0.1156 | 0.9876 |
+| substrate flap 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 0.2114 | 0.9876 |
+
+结论：
+
+```text
+10% substrate 不是无损压缩：相对 dense 少 7 条成功任务。
+但它稳定通过 1000：failure recovery 195/200，collapse=0，schema validity 0.9876。
+stage-reflect-dense 将 cost_per_success 从 2.2066 降到 2.0777，约降低 5.8%。
+同为 990/1000 时，stage-reflect-dense 比 observe-failure-redense 的 fallback step
+少约 45%，说明 reflect-localized recovery 在更高 10% FFN budget 下仍成立。
 ```
 
 ## 4. 实验顺序
@@ -304,10 +323,11 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 ```
 
 11. `[DONE]` 单独跑 20% pressure smoke；结果未通过，不进入 1000 主表。
-12. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000，只保留必要方法：
+12. `[DONE]` 以 10% stage-reflect-dense 为主候选跑 1000，只保留必要方法：
 `dense`、`identity_hook`、`substrate_flap_0p10_stage_reflect_dense`、
 `substrate_flap_0p10_observe_failure_redense`。
-13. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+13. `[NEXT]` 做 P2c：schema-aware nested budget plans + stage-dependent substrate routing。
+14. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照
 

@@ -337,7 +337,22 @@ premature_final_rate: 0.67
 ```
 
 评估代码审查没有发现会误判 20% 的 runner / parser / metrics bug。20% 不进入
-1000 主表。下一步以 10% 为主候选跑 1000：
+1000 主表。
+
+10% 主候选 1000 已经跑完：
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 | 1.0000 |
+| substrate_flap_0p10_stage_reflect_dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 0.1156 | 0.9876 |
+| substrate_flap_0p10_observe_failure_redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 0.2114 | 0.9876 |
+
+该结果可冻结为当前 P2 主结果：10% 不是无损，但稳定通过 1000，
+cost_per_success 约降 5.8%，且 stage-reflect-dense 在相同成功率下比窗口式
+observe-failure-redense 少约 45% dense fallback step。
+
+历史命令如下；不要重复跑同一配置，除非需要复核：
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -355,8 +370,8 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
 ```
 
-不要把 `0p05` 或 `0p20` 加入这轮 1000。后续需要 nested budget ladder 和
-Agent-aware calibration 后再重建这些档位。
+不要把 `0p05` 或 `0p20` 加入 1000 主表。后续需要 nested budget ladder、
+schema-aware calibration 和 stage-dependent substrate routing 后再重建这些档位。
 
 ### Historical v1 commands
 

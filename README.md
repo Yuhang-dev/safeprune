@@ -277,7 +277,16 @@ python -u scripts/evaluate_real_tool_loop.py \
 | dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
 | substrate flap 20% stage-reflect-dense | 60/100 | 9/20 | 51/80 | 6.5194 | 0.5247 |
 
-Therefore the next 1000-task run should keep only the 10% substrate candidate:
+The 10% 1000-task run has completed:
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step ratio |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 0.0000 |
+| substrate flap 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 0.1156 |
+| substrate flap 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 0.2114 |
+
+The exact command used for the 10% run was:
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -294,6 +303,11 @@ python -u scripts/evaluate_real_tool_loop.py \
     substrate_flap_0p10_observe_failure_redense \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000
 ```
+
+The result is a stable but not lossless 10% substrate: success drops by 7 tasks
+relative to dense, while cost per success drops by about 5.8%. The
+stage-reflect-dense route has the same success as observe-failure-redense with
+about 45% fewer dense fallback steps.
 
 Run local unit tests:
 
