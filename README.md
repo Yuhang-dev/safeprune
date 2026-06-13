@@ -237,6 +237,38 @@ At 10%, stage-reflect-dense is preferred over observe-failure-redense because it
 has the same 99/100 success with lower fallback step ratio.
 ```
 
+Audit the non-monotonic 5% substrate plan and compare plan nesting:
+
+```bash
+python scripts/audit_substrate_plans.py \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --name flap_0p03 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --name flap_0p05 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --name flap_0p10 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p20.json \
+  --name flap_0p20 \
+  --output-json outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.json \
+  --output-md outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.md
+```
+
+Run 20% only as a pressure smoke before considering it for the 1000-task table:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p20.json \
+  --substrate-name flap_0p20 \
+  --methods \
+    dense \
+    substrate_flap_0p20_stage_reflect_dense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p20_smoke_100
+```
+
 Run local unit tests:
 
 ```bash

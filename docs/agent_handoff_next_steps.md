@@ -119,9 +119,10 @@ failure subset 19/20，cost_per_success 低于 dense。
 当前下一步：
 
 ```text
-1. 检查 5% budget_plan_0p05.json 的 layer allocation 和失败 trace。
-2. 若确认不是 runner bug，跑 10% 1000，3% 作为安全对照。
-3. 20% 只做 pressure smoke，不直接进入正式主表。
+1. 用 scripts/audit_substrate_plans.py 检查 3/5/10/20% plan overlap、nesting、
+   per-layer allocation 和 bias compensation norm。
+2. 跑 20% Real Tool 100 pressure smoke；只有通过 smoke 才考虑进入 1000。
+3. 若 5% 确认是坏 allocation 而不是 runner bug，跑 10% 1000，3% 作为安全对照。
 4. P1 hidden-state 1000 跑完后冻结到文档。
 ```
 

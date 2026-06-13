@@ -287,31 +287,41 @@ At 10%, prefer stage-reflect-dense over observe-failure-redense because both are
 99/100, but stage-reflect-dense uses fewer fallback steps.
 ```
 
-下一步先看 5% 的 layer allocation 是否误伤关键层：
+下一步先用 audit 脚本看 5% 的 layer allocation 是否误伤关键层：
 
 ```bash
-python - <<'PY'
-import json
-from pathlib import Path
-
-base = Path("outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap")
-for name in ["0p03", "0p05", "0p10", "0p20"]:
-    plan = json.loads((base / f"budget_plan_{name}.json").read_text())
-    layers = plan["layers"]
-    total = sum(layer["num_mlp_channels"] for layer in layers)
-    pruned = sum(len(layer.get("pruned_mlp_channels", [])) for layer in layers)
-    alloc = [
-        (layer["layer_idx"], len(layer.get("pruned_mlp_channels", [])) / layer["num_mlp_channels"])
-        for layer in layers
-        if len(layer.get("pruned_mlp_channels", [])) > 0
-    ]
-    print(name, "actual_sparsity", round(pruned / total, 6), "active", round(1 - pruned / total, 6))
-    print("  allocation:", " ".join(f"L{i}:{r:.2f}" for i, r in alloc))
-PY
+python scripts/audit_substrate_plans.py \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p03.json \
+  --name flap_0p03 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p05.json \
+  --name flap_0p05 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p10.json \
+  --name flap_0p10 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p20.json \
+  --name flap_0p20 \
+  --output-json outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.json \
+  --output-md outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/plan_audit.md
 ```
 
-如果确认 5% 是坏 allocation 而不是 runner bug，下一步以 10% 为主候选跑
-1000，3% 作为安全对照：
+然后单独跑 20% pressure smoke。20% 不直接进正式 1000，先看是否保持
+non-failure、failure recovery 和 schema 稳定：
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1_smoke_100.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2/flap/budget_plan_0p20.json \
+  --substrate-name flap_0p20 \
+  --methods \
+    dense \
+    substrate_flap_0p20_stage_reflect_dense \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p20_smoke_100
+```
+
+如果确认 5% 是坏 allocation 而不是 runner bug，且 20% smoke 未通过主线门槛，
+下一步以 10% 为主候选跑 1000，3% 作为安全对照：
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -331,7 +341,16 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_1000
 ```
 
-`0p20` 只作为后续 pressure smoke 单独加，不直接进入正式 1000 主表。
+如果 `0p20` smoke 达到：
+
+```text
+overall >= 95/100
+failure >= 18/20
+non-failure >= 78/80
+generation_collapse_rate = 0
+```
+
+则把 `substrate_flap_0p20_stage_reflect_dense` 加入 1000 主表；否则只作为压力测试记录。
 
 ### Historical v1 commands
 

@@ -274,13 +274,15 @@ python -u scripts/evaluate_real_tool_loop.py \
 10. `[NEXT]` 先分析 5% anomaly，不跑 5% 1000：
 
 ```text
-检查 budget_plan_0p05.json 的 layer allocation。
+用 scripts/audit_substrate_plans.py 检查 budget_plan_0p05.json 的 layer allocation、
+plan nesting、overlap、重复/越界 channel index 和 bias compensation norm。
 抽取 5% stage-reflect-dense / observe-failure-redense 失败 trace。
 确认是否某些关键层被 5% allocation 误剪，或 bias compensation 在某些层引入过强偏置。
 ```
 
-11. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000；3% 可作为安全对照。
-12. `[OPTIONAL]` 单独加入 20% pressure smoke，但不直接作为正式主结果。
+11. `[NEXT]` 单独跑 20% pressure smoke；如果达到 `overall >= 95/100`、
+`failure >= 18/20`、`non-failure >= 78/80` 且 collapse 为 0，再加入 1000 主表。
+12. `[NEXT]` 以 10% stage-reflect-dense 为主候选跑 1000；3% 可作为安全对照。
 13. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 ## 5. 必须对照

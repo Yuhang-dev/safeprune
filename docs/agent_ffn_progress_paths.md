@@ -168,9 +168,10 @@ P2 Real Tool 100 smoke：
 
 ```text
 不要跑 5% 1000。
-先分析 5% layer allocation / failure trace。
+先用 scripts/audit_substrate_plans.py 分析 5% layer allocation、plan nesting、
+overlap、重复/越界 index、bias compensation norm 和 failure trace。
 10% stage-reflect-dense 是当前主候选，3% 是安全对照。
-20% 只作为 pressure smoke。
+20% 先作为 pressure smoke；通过后才进入 1000 主表。
 ```
 
 ## 1. 已完成路径
