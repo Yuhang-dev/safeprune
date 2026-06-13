@@ -1109,10 +1109,12 @@ Stage-Aware Dynamic FFN Pruning
 Trajectory-Event-Aware FFN Compute Allocation
 ```
 
-下一步：
+这些下一步已经推进到 P1/P2/P2c，最新状态见
+`docs/p2_substrate_and_p2c_results.md`：
 
 ```text
-1. 跑 hidden-state centroid baseline。
-2. 做 3% / 5% / 10% global FFN budget ladder。
-3. 研究 FLAP-style scoring、layer-wise budget、bias/scale compensation。
+1. hidden-state centroid baseline 1000 已完成；hidden-state-only 不如显式 event。
+2. FLAP 10% substrate 1000 已完成；990/1000，cost_per_success 约降 5.8%。
+3. P2c schema-aware nested adaptive routing 100 smoke 已通过。
+4. 当前下一步是 P2c 1000 最小矩阵：dense、identity_hook、nested_uniform_10、adaptive_B20。
 ```

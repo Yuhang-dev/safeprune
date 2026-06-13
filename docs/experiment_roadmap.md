@@ -27,10 +27,10 @@ cost per successful task = total active FFN cost / successful tasks
 | Agent metrics | `[DONE]` | 新增 task success、tool validity、recovery rate、active FFN cost 指标。 |
 | Controlled Mask Validation v1 | `[DONE]` | 1000 条 direct-answer controlled mask 结果已冻结到 `docs/controlled_mask_validation_v1.md`。 |
 | Real Tool-Execution Agent Prune v1 | `[DONE]` | 1000 条真实工具闭环结果已冻结到 `docs/real_tool_v1_results.md`。 |
-| Hidden-state centroid router | `[IN PROGRESS]` | smoke 已证明 event hybrid 能追平 stage-reflect-dense；1000 条正式结果待冻结。 |
-| FLAP-style substrate v2 | `[IN PROGRESS]` | 已构建 activation/Wanda/FLAP plans，并完成 controlled prompt PPL sanity。 |
+| Hidden-state centroid router | `[DONE]` | 1000 条 P1 已完成；hidden-state-only 弱于显式 event，event hybrid 追平但 router-inclusive cost 高。 |
+| FLAP-style substrate v2 | `[DONE]` | 10% Real Tool 1000 已完成；稳定但非无损，cost_per_success 约降 5.8%。 |
 | Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
-| P2c adaptive budget routing | `[IN PROGRESS]` | 已新增 schema calibration、nested ladder builder、generation-type routing；下一步跑 100 smoke。 |
+| P2c adaptive budget routing | `[DONE]` | 1000 最小矩阵已完成；adaptive_B20 追平 dense 997/1000，cost_per_success 降到 1.9057。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | compact FFN / kernel | `[TODO]` | 第一版只做 mask-based 算法验证，不声称真实加速。 |
 
@@ -186,6 +186,48 @@ stage-reflect-dense 将 cost_per_success 从 2.2066 降到 2.0777，约降低 5.
 少约 45%，说明 reflect-localized recovery 在更高 10% FFN budget 下仍成立。
 ```
 
+P2c schema-aware nested 100 smoke 已通过：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
+| nested_uniform_10 | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_A | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_B15 | 100/100 | 20/20 | 80/80 | 1.9500 | 1.0000 |
+| adaptive_B20 | 100/100 | 20/20 | 80/80 | 1.9000 | 1.0000 |
+
+P2c 的核心解释：
+
+```text
+schema-sensitive tool-call / retry generation 使用 10% conservative budget；
+final-answer generation 使用 20% aggressive budget；
+failure reflect recovery 保持 dense。
+
+这说明 uniform 20% 会破坏工具协议，但按 generation type 分配预算后，
+answer step 可以承受更高剪枝率，且 smoke 中 unit_convert 恢复到 33/33。
+```
+
+P2c 1000 最小对照矩阵已完成：
+
+```text
+dense
+identity_hook
+nested_uniform_10
+adaptive_B20
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| nested_uniform_10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1.0000 |
+| adaptive_B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1.0000 |
+
+`nested_uniform_10` 证明统一 10% nested substrate 已经稳定；`adaptive_B20`
+证明 generation-type routing 在保持相同成功率时进一步降低 cost_per_success。
+相对 dense，`adaptive_B20` 的 cost_per_success 下降约 13.6%；相对
+`nested_uniform_10` 下降约 5.0%。
+
 ## 4. 实验顺序
 
 1. `[DONE]` 冻结 controlled mask validation v1：
@@ -237,7 +279,7 @@ outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_bypass_1000*
 docs/real_tool_v1_results.md
 ```
 
-6. `[IN PROGRESS]` 加入 hidden-state centroid router 对照：
+6. `[DONE]` 加入 hidden-state centroid router 对照：
 
 ```bash
 python scripts/prepare_real_tool_tasks.py \
@@ -262,7 +304,14 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_hidden_centroid_1000
 ```
 
-7. `[IN PROGRESS]` 实现 FLAP-style substrate v2：
+P1 1000 结果已经冻结到 `docs/p2_substrate_and_p2c_results.md`。结论是：
+
+```text
+hidden-state-only centroid 不如显式 event；
+event hybrid 追平 stage-reflect-dense，但 router-inclusive cost 明显更高。
+```
+
+7. `[DONE]` 实现 FLAP-style substrate v2：
 
 ```bash
 python scripts/build_pruning_substrate_v2.py \
@@ -327,7 +376,8 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 12. `[DONE]` 以 10% stage-reflect-dense 为主候选跑 1000，只保留必要方法：
 `dense`、`identity_hook`、`substrate_flap_0p10_stage_reflect_dense`、
 `substrate_flap_0p10_observe_failure_redense`。
-13. `[NEXT]` 做 P2c：schema-aware nested budget plans + stage-dependent substrate routing。
+13. `[DONE]` 跑 P2c 1000 最小矩阵：
+`dense`、`identity_hook`、`nested_uniform_10`、`adaptive_B20`。
 14. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 P2c 已实现的入口：

@@ -10,4 +10,5 @@ wandb/
 *.bin
 *.pt
 *.pth
-
+.idea/
+docs/.idea/

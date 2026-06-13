@@ -25,13 +25,15 @@ The default project route is:
 3. Use Real Tool v1's central finding as the current paper story: failure
    recovery is a localized reflect-step compute bottleneck, and trajectory
    events can trigger targeted re-densification.
-4. Add hidden-state dynamic routing baselines after Real Tool v1:
-   `hidden_state_centroid_global_balanced_approx_0.01`,
-   `hidden_state_centroid_reflect_dense_global_balanced_approx_0.01`, and
-   `hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01`.
-5. Start a bottom-up pruning budget ladder, targeting 3%, 5%, and 10% global FFN
-   budgets with layer-wise allocation and compensation.
-6. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
+4. Treat `docs/p2_substrate_and_p2c_results.md` as the active P1/P2/P2c
+   status page:
+   hidden-state-only is a reviewer baseline, 10% substrate is the current
+   frozen P2 result, and schema-aware adaptive routing is the current P2c path.
+5. Treat P2c as the current main result: `adaptive_B20` matches dense success
+   at 997/1000 while reducing cost per success by about 13.6%.
+6. Next, run standard WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity, then
+   7B smoke and compact-subnet latency work.
+7. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
    current Agent Prune v1 loop.
 
 The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The
@@ -309,7 +311,7 @@ relative to dense, while cost per success drops by about 5.8%. The
 stage-reflect-dense route has the same success as observe-failure-redense with
 about 45% fewer dense fallback steps.
 
-Next P2c smoke uses schema-aware nested plans and generation-type routing:
+P2c schema-aware nested plans and generation-type routing were built with:
 
 ```bash
 python scripts/prepare_schema_calibration.py \
@@ -349,6 +351,50 @@ python -u scripts/evaluate_real_tool_loop.py \
   --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_smoke_100
 ```
 
+P2c 100-smoke result:
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
+| nested_uniform_10 | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_A | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_B15 | 100/100 | 20/20 | 80/80 | 1.9500 | 1.0000 |
+| adaptive_B20 | 100/100 | 20/20 | 80/80 | 1.9000 | 1.0000 |
+
+P2c 1000 result:
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| nested_uniform_10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1.0000 |
+| adaptive_B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1.0000 |
+
+`adaptive_B20` matches dense task success while lowering cost per success by
+about 13.6%. It also improves over `nested_uniform_10` by about 5.0%, showing
+that final-answer generations can safely use the 20% plan while tool-call and
+retry generations stay at 10%.
+
+P2c 1000 reproduction command:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p05.json \
+  --substrate-name nested_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --substrate-name nested_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p15.json \
+  --substrate-name nested_0p15 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --substrate-name nested_0p20 \
+  --methods dense identity_hook nested_uniform_10 adaptive_B20 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000
+```
+
 Run local unit tests:
 
 ```bash
@@ -363,3 +409,5 @@ python -m unittest discover -s tests
 - `docs/4090_smoke_results.md`: legacy SafePrune-DPO smoke results and failure notes.
 - `docs/controlled_mask_validation_v1.md`: frozen 1000-task controlled mask validation.
 - `docs/real_tool_v1_results.md`: frozen 1000-task real tool-execution result.
+- `docs/p2_substrate_and_p2c_results.md`: P1 hidden-state baseline, P2 10%
+  substrate result, and P2c schema-aware adaptive routing status.

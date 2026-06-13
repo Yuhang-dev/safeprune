@@ -226,18 +226,16 @@ task success / failure recovery
 
 ## 9. 下一步
 
-优先级：
+Real Tool v1 到此冻结，不继续补同配置 1000 条。后续 P1/P2 结果已经整理到
+`docs/p2_substrate_and_p2c_results.md`。
 
-1. `[NEXT]` 跑 hidden-state centroid baseline，分三档：
-   `hidden_state_centroid_global_balanced_approx_0.01`、
-   `hidden_state_centroid_reflect_dense_global_balanced_approx_0.01`、
-   `hidden_state_centroid_event_reflect_dense_global_balanced_approx_0.01`。
-2. `[NEXT]` 比较 hidden-state-only、hidden reflect-dense、hidden+event hybrid 与 `stage_reflect_dense`，回答外部 Agent signal 是否比 hidden state 更可靠、更低成本。
-3. `[P2]` 启动底层剪枝率升级线：FLAP-style fluctuation scoring、global layer-wise budget optimizer、bias / scale compensation。
-4. `[P2]` 做 global FFN budget ladder：`3% / 5% / 10%`。
+当前后续优先级：
+
+1. `[DONE]` P1 hidden-state centroid baseline：hidden-state-only 不如显式 event；event hybrid 追平但 router-inclusive cost 高。
+2. `[DONE]` P2 FLAP 10% substrate：990/1000，cost_per_success 比 dense 降约 5.8%，但不是无损。
+3. `[DONE]` P2c schema-aware nested adaptive routing：1000 已完成，`adaptive_B20` 追平 dense 997/1000，cost_per_success 降到 1.9057。
+4. `[NEXT]` 标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity。
 5. `[P3]` compact subnet 或 kernel 实现后，才能报告真实 latency / throughput。
-
-Real Tool v1 到此冻结，不继续补同配置 1000 条。
 
 ## 10. Post-v1 addendum: P2 substrate status
 

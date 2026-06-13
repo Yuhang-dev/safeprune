@@ -1,0 +1,50 @@
+extends: configs/safeprune_qwen2_5_7b.yaml
+
+experiment:
+  name: agent_qwen2_5_7b
+  output_dir: outputs/agent_qwen2_5_7b
+
+model:
+  base_model: Qwen/Qwen2.5-7B-Instruct
+  teacher_model: null
+  torch_dtype: bfloat16
+  use_flash_attention_2: false
+
+data:
+  preference_train: data/preference/train.jsonl
+  calibration: data/agent/controlled_tasks.jsonl
+  max_length: 1024
+  max_prompt_length: 512
+
+pruning:
+  sparsity: 0.20
+  target_sparsities: [0.10, 0.20]
+  prune_attention_heads: false
+  prune_mlp_channels: true
+  min_mlp_channels_per_layer: 256
+  scores_dir: outputs/agent_qwen2_5_7b/prune_scores
+  pruned_dir: outputs/agent_qwen2_5_7b/pruned
+
+agent:
+  task_path: data/agent/controlled_tasks.jsonl
+  calibration_path: data/agent/controlled_tasks.jsonl
+  mask_bank_dir: outputs/agent_qwen2_5_7b/mask_bank
+  target_sparsities: [0.10, 0.20]
+  stage_sparsities:
+    plan: 0.10
+    act: 0.10
+    observe: 0.10
+    reflect: 0.00
+    answer: 0.20
+  failure_sparsity: 0.00
+  default_sparsity: 0.10
+  recovery_window_steps: 2
+
+evaluation:
+  output_dir: outputs/agent_qwen2_5_7b/eval
+
+tracking:
+  enabled: true
+  backend: swanlab
+  project: agent-ffn-pruning-4090
+  tags: ["4090", agent, qwen2.5-7b, ffn-only, p4]

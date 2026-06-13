@@ -5,6 +5,7 @@
 本文是当前新对话交接入口。优先读本文，再按需读：
 
 ```text
+docs/p2_substrate_and_p2c_results.md
 docs/real_tool_v1_results.md
 docs/controlled_mask_validation_v1.md
 docs/agent_mask_eval_results.md
@@ -19,6 +20,64 @@ docs/remote_workflow.md
 ```text
 Controlled Mask Validation v1
 Real Tool-Execution Agent Prune v1
+P1 hidden-state centroid baseline 1000
+P2 FLAP 10% substrate 1000
+P2c schema-aware nested adaptive routing 1000
+```
+
+当前下一步：
+
+```text
+标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity
+compact FFN subnet / kernel for real wall-clock speedup
+```
+
+P2c 100-smoke 已通过：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
+| nested_uniform_10 | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_A | 100/100 | 20/20 | 80/80 | 2.0000 | 1.0000 |
+| adaptive_B15 | 100/100 | 20/20 | 80/80 | 1.9500 | 1.0000 |
+| adaptive_B20 | 100/100 | 20/20 | 80/80 | 1.9000 | 1.0000 |
+
+`adaptive_B20` routing trace 已确认：
+
+```text
+tool_call_or_retry -> nested_0p10
+reflect_recovery   -> reflect_dense
+final_answer       -> nested_0p20
+```
+
+P2c 1000 使用了最小解释矩阵：
+
+```text
+dense
+identity_hook
+nested_uniform_10
+adaptive_B20
+```
+
+不要只跑 `adaptive_B20`，否则无法证明 generation-type routing 相比统一 10%
+nested budget 的增益。
+
+P2c 1000 已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| identity_hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 1.0000 |
+| nested_uniform_10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1.0000 |
+| adaptive_B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1.0000 |
+
+解释：
+
+```text
+adaptive_B20 与 dense 成功率完全一致：997/1000。
+相对 dense，cost_per_success 下降约 13.6%。
+相对 nested_uniform_10，cost_per_success 进一步下降约 5.0%。
+schema_validity_rate、premature_final_rate、generation_collapse_rate 均正常。
 ```
 
 Real Tool v1 的正式结果在：
@@ -49,13 +108,12 @@ failure / reflect 轨迹信号可以定位高价值计算步骤。
 | observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 0.1818 |
 | stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 0.0926 |
 
-下一步不要继续补同配置 1000。优先级是：
+Real Tool v1 不要继续补同配置 1000。历史优先级中 P1/P2/P2c 已完成，现在优先级是：
 
 ```text
-1. 跑 hidden-state centroid baseline：pure centroid、reflect-dense centroid、event hybrid。
-2. 实现 FLAP-style scoring、global layer-wise budget、bias/scale compensation。
-3. 做 3% / 5% / 10% global FFN budget ladder。
-4. compact subnet / kernel 后再报告真实加速。
+1. 补标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity。
+2. 打包 P2c 1000 输出并更新论文表。
+3. compact subnet / kernel 后再报告真实加速。
 ```
 
 当前 P2 substrate v2 已开始，新增远端入口：
@@ -252,11 +310,12 @@ Real Tool v1 frozen -> hidden-state baseline / budget ladder
 -> observation 回填 -> 模型 final answer -> 自动判分
 ```
 
-当前工作不是继续补同配置 1000，也不是上 7B，而是验证：
+当前工作已经越过 hidden-state 和 3B P2c 验证阶段。现在要验证：
 
 ```text
-hidden-state-only centroid router 是否能替代显式 failure / reflect 轨迹信号
-更高 global FFN budget 是否能在 Real Tool v1 稳定路由下成立
+P2c 是否保持通用 benchmark 能力
+Adaptive-B20 是否能扩展到 Qwen2.5-7B smoke
+active FFN cost 是否能通过 compact subnet 转成真实 latency 收益
 ```
 
 ## 2. 为什么要这样做
@@ -623,6 +682,8 @@ generation_collapse_rate = 0
 
 若 `adaptive_B20` 不稳，补跑 `adaptive_B15` 即可；不要扩大到 1000。
 
+这条判断已完成：`adaptive_B20` 1000 稳定，已冻结为 P2c 主结果。
+
 ## 7. 不要做
 
 当前不要做：
@@ -631,11 +692,11 @@ generation_collapse_rate = 0
 不要继续 full per-layer 20% / 30% mask。
 不要重新尝试 attention head pruning。
 不要声称 mask hook 有真实 wall-clock speedup。
-不要直接上 7B 主实验。
+不要直接上 7B 1000；先跑 7B Real Tool 100 smoke。
 不要把远端输出 vendoring 到 src/。
 不要跳过 dense/identity 对齐检查。
 不要在 real tool smoke 不稳定时加入复杂工具或 stateful DB。
-不要把 5% 或 20% 加入当前 10% 1000 主表。
+不要把旧独立 5% 或旧 uniform 20% 加入当前主表。
 ```
 
 ## 8. 新对话建议首条指令

@@ -1,0 +1,472 @@
+# P2 Substrate and P2c Adaptive Routing Results
+
+日期：2026-06-13
+
+本文承接 `docs/real_tool_v1_results.md`。Real Tool v1 已经证明：
+
+```text
+failure / reflect trajectory events can localize high-value recovery compute.
+```
+
+P2/P2c 的目标不是继续手工调 1% mask，而是把底层 FFN 结构化剪枝率推到有论文意义的预算，并验证更激进预算能否按 generation type 安全分配。
+
+## 1. 当前结论
+
+当前已经形成三条主证据：
+
+| Stage | Evidence | Result |
+|---|---|---|
+| Real Tool v1 | 1% trajectory-event-aware routing | failure recovery 是局部 reflect-step 计算瓶颈。 |
+| P1 hidden-state baseline | centroid router 1000 | hidden-state-only 不如显式 event；event hybrid 追平但 router-inclusive cost 高。 |
+| P2 10% substrate | FLAP substrate 1000 | 10% FFN pruning + reflect dense 稳定但非无损，cost/success 下降约 5.8%。 |
+| P2c adaptive routing | schema-aware nested 1000 | tool-call 10%、answer 20%、reflect dense 达到 dense 同等 997/1000，cost/success 下降到 1.9057。 |
+
+论文表述应保持克制：
+
+```text
+10% substrate is not lossless compression.
+It preserves strong real-tool success while reducing active FFN cost.
+P2c shows that final-answer generation can tolerate a more aggressive budget
+than schema-sensitive tool-call generation.
+```
+
+当前仍不声称真实 wall-clock speedup；所有成本都是 mask-hook active FFN cost。
+
+## 2. P1 Hidden-State Baseline
+
+产物：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p1_hidden_1000*
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Router-inclusive cost | Fallback step |
+|---|---:|---:|---:|---:|---:|---:|
+| Dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2.2066 | 0.0000 |
+| Identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 2.2066 | 0.0000 |
+| Observe-failure-redense | 997/1000 | 197/200 | 800/800 | 2.1886 | 2.1886 | 0.1818 |
+| Stage-reflect-dense | 996/1000 | 196/200 | 800/800 | 2.1918 | 2.1918 | 0.0926 |
+| Hidden centroid | 980/1000 | 180/200 | 800/800 | 2.3093 | 4.6420 | 0.0000 |
+| Hidden centroid reflect-dense | 983/1000 | 183/200 | 800/800 | 2.2609 | 4.5437 | 0.0392 |
+| Hidden centroid + event | 996/1000 | 196/200 | 800/800 | 2.1918 | 4.4036 | 0.0926 |
+
+Interpretation:
+
+```text
+Hidden-state-only centroid routing does not replace explicit Agent trajectory events.
+The event hybrid matches stage-reflect-dense, but the router-inclusive cost is high
+because the centroid router needs a hidden-state prefill.
+```
+
+This is a reviewer baseline, not the main method.
+
+## 3. P2 Substrate v2
+
+P2 introduces external substrate plans:
+
+```text
+scripts/build_pruning_substrate_v2.py
+scripts/evaluate_pruning_ppl.py
+scripts/evaluate_real_tool_loop.py --substrate-plan / --substrate-name
+```
+
+The first substrate v2 uses FLAP-style channel scoring, global budget allocation, and bias compensation. Layer scale is currently a `1.0` placeholder, not real scale calibration.
+
+### Controlled prompt PPL sanity
+
+This is controlled-task prompt PPL, not standard WikiText-2 PPL.
+
+| Plan | Active MLP ratio | PPL | Relative PPL increase |
+|---|---:|---:|---:|
+| Dense | 1.0000 | 23.2031 | 0.00% |
+| FLAP 3% | 0.9697 | 23.6021 | +1.72% |
+| FLAP 5% | 0.9497 | 23.6440 | +1.90% |
+| FLAP 10% | 0.8998 | 24.7785 | +6.79% |
+| FLAP 20% | 0.7998 | 24.0066 | +3.46% |
+
+This only says the substrate does not collapse on controlled prompts. The paper still needs standard WikiText-2 and common benchmark checks.
+
+### Real Tool 100 smoke
+
+| Method | Success | Failure | Non-failure | Cost / success | Fallback step |
+|---|---:|---:|---:|---:|---:|
+| Dense | 100/100 | 20/20 | 80/80 | 2.2000 | 0.0000 |
+| FLAP 3% stage-reflect-dense | 100/100 | 20/20 | 80/80 | 2.1395 | 0.0909 |
+| FLAP 5% stage-reflect-dense | 66/100 | 13/20 | 53/80 | 5.1615 | 0.5244 |
+| FLAP 10% stage-reflect-dense | 99/100 | 19/20 | 80/80 | 2.0399 | 0.0991 |
+| FLAP 5% observe-failure-redense | 66/100 | 13/20 | 53/80 | 5.1714 | 0.5616 |
+| FLAP 10% observe-failure-redense | 99/100 | 19/20 | 80/80 | 2.0602 | 0.1892 |
+
+Interpretation:
+
+```text
+3% is safe.
+10% is the first meaningful substrate budget that remains stable enough for 1000.
+5% is an allocation anomaly, not a conservative result.
+```
+
+### 5% audit and 20% pressure smoke
+
+The audit found no duplicate or out-of-range channel indices. The 5% failure came from non-nested independent allocation:
+
+```text
+flap_0p05_vs_flap_0p10: 9353 channels pruned at 5% are not pruned at 10%.
+```
+
+Uniform 20% failed real-tool smoke and should not enter the 1000 table:
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| Dense | 100/100 | 20/20 | 80/80 | 2.2000 | 1.0000 |
+| FLAP 20% stage-reflect-dense | 60/100 | 9/20 | 51/80 | 6.5194 | 0.5247 |
+
+The failure is concentrated in protocol/schema behavior, especially `unit_convert = 0/33`.
+
+## 4. P2 10% Real Tool 1000
+
+产物：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_substrate_flap_0p10_1000*
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Fallback step | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 |
+| Identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 |
+| FLAP 10% stage-reflect-dense | 990/1000 | 195/200 | 795/800 | 2.0777 | 2056.9205 | 0.1156 | 0.9876 |
+| FLAP 10% observe-failure-redense | 990/1000 | 195/200 | 795/800 | 2.0987 | 2077.6726 | 0.2114 | 0.9876 |
+
+Interpretation:
+
+```text
+10% stage-reflect-dense is stable but not lossless: success drops from 997 to 990.
+Cost per success drops from 2.2066 to 2.0777, about 5.8%.
+Active FFN cost drops from 2200.0 to 2056.9, about 6.5%.
+Compared with 10% observe-failure-redense, success is identical but fallback step ratio
+drops from 0.2114 to 0.1156, about 45% fewer dense fallback steps.
+```
+
+This preserves the Real Tool v1 story at a meaningful 10% FFN pruning budget.
+
+## 5. P2c Schema-Aware Nested Budget Routing
+
+P2c fixes the independent-plan problem and adds generation-type routing.
+
+Implemented entry points:
+
+```text
+scripts/prepare_schema_calibration.py
+scripts/build_pruning_substrate_v2.py --nested-budget-ladder --schema-calibration-path
+scripts/evaluate_real_tool_loop.py methods:
+  nested_uniform_10
+  adaptive_A
+  adaptive_B15
+  adaptive_B20
+```
+
+Nested budget ladder:
+
+```text
+5%, 10%, 12%, 15%, 18%, 20%
+```
+
+If `M_r` is the deleted channel set, the builder enforces:
+
+```text
+M_5 subset M_10 subset M_12 subset M_15 subset M_18 subset M_20
+```
+
+Nested audit:
+
+```text
+duplicate channel indices: 0
+out-of-range channel indices: 0
+nesting overlap: 100% for adjacent budgets
+```
+
+Generation-type routing:
+
+| Method | Tool-call / retry | Final answer | Reflect recovery |
+|---|---:|---:|---:|
+| `nested_uniform_10` | 10% | 10% | dense |
+| `adaptive_A` | 5% | 15% | dense |
+| `adaptive_B15` | 10% | 15% | dense |
+| `adaptive_B20` | 10% | 20% | dense |
+
+The first version uses schema-heavy assistant-target calibration snippets. The `--schema-token-weight` interface exists, but true token-level weighted loss is not yet implemented.
+
+### P2c Real Tool 100 smoke
+
+产物：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_smoke_100*
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|
+| Dense | 100/100 | 20/20 | 80/80 | 2.2000 | 220.0000 | 1.0000 |
+| Nested uniform 10 | 100/100 | 20/20 | 80/80 | 2.0000 | 199.9999 | 1.0000 |
+| Adaptive A | 100/100 | 20/20 | 80/80 | 2.0000 | 199.9996 | 1.0000 |
+| Adaptive B15 | 100/100 | 20/20 | 80/80 | 1.9500 | 194.9997 | 1.0000 |
+| Adaptive B20 | 100/100 | 20/20 | 80/80 | 1.9000 | 189.9998 | 1.0000 |
+
+By tool:
+
+| Method | Calculator | Lookup | Unit convert |
+|---|---:|---:|---:|
+| Dense | 34/34 | 33/33 | 33/33 |
+| Nested uniform 10 | 34/34 | 33/33 | 33/33 |
+| Adaptive A | 34/34 | 33/33 | 33/33 |
+| Adaptive B15 | 34/34 | 33/33 | 33/33 |
+| Adaptive B20 | 34/34 | 33/33 | 33/33 |
+
+`adaptive_B20` trace check:
+
+```text
+tool_call_or_retry -> nested_0p10
+reflect_recovery   -> reflect_dense
+final_answer       -> nested_0p20
+```
+
+Interpretation:
+
+```text
+Schema-aware nested plans fixed the uniform 20% protocol collapse seen in P2.
+Adaptive B20 is the best 100-smoke candidate: same 100/100 success as dense and nested_uniform_10,
+but lower cost per success.
+```
+
+## 6. P2c Real Tool 1000
+
+产物：
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000*
+```
+
+Minimal explanatory matrix:
+
+```text
+dense
+identity_hook
+nested_uniform_10
+adaptive_B20
+```
+
+Main table:
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Fallback step | Schema validity | Premature final | Collapse |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 | 0.0000 | 0.0000 |
+| Identity hook | 997/1000 | 197/200 | 800/800 | 2.2066 | 2200.0000 | 0.0000 | 1.0000 | 0.0000 | 0.0000 |
+| Nested uniform 10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1999.9990 | 0.0909 | 1.0000 | 0.0000 | 0.0000 |
+| Adaptive B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1899.9985 | 0.0909 | 1.0000 | 0.0000 | 0.0000 |
+
+By tool:
+
+| Method | Calculator | Lookup | Unit convert |
+|---|---:|---:|---:|
+| Dense | 331/334 | 333/333 | 333/333 |
+| Identity hook | 331/334 | 333/333 | 333/333 |
+| Nested uniform 10 | 331/334 | 333/333 | 333/333 |
+| Adaptive B20 | 331/334 | 333/333 | 333/333 |
+
+Cost reductions:
+
+| Comparison | Cost / success reduction | Active FFN cost reduction |
+|---|---:|---:|
+| Nested uniform 10 vs dense | 9.1% | 9.1% |
+| Adaptive B20 vs dense | 13.6% | 13.6% |
+| Adaptive B20 vs nested uniform 10 | 5.0% | 5.0% |
+
+Interpretation:
+
+```text
+P2c reaches dense-equivalent task success: 997/1000 overall, 197/200 failure,
+and 800/800 non-failure for both nested_uniform_10 and adaptive_B20.
+
+Nested uniform 10 proves the schema-aware nested 10% substrate is stable.
+Adaptive B20 proves generation-type routing adds value: same task success and
+same fallback_step_ratio as nested_uniform_10, but lower cost_per_success by
+about 5.0% because final-answer generations use the 20% plan.
+
+Compared with dense, adaptive_B20 lowers cost_per_success by about 13.6%
+without increasing schema errors, premature final, or generation collapse.
+```
+
+This is the current P2c main result. It is still an active-FFN-cost result, not a wall-clock speedup result.
+
+Reproduction command:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_3b_4090_low/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p05.json \
+  --substrate-name nested_0p05 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --substrate-name nested_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p15.json \
+  --substrate-name nested_0p15 \
+  --substrate-plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --substrate-name nested_0p20 \
+  --methods dense identity_hook nested_uniform_10 adaptive_B20 \
+  --output-prefix outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000
+```
+
+## 7. Paper Story
+
+The paper story can now be written as:
+
+```text
+1. PPL alone can miss Agent tool-schema degradation.
+2. Uniform high pruning can break structured tool protocol.
+3. Failure recovery is a localized reflect-step compute bottleneck.
+4. Explicit Agent trajectory events are reliable, near-zero-overhead routing signals.
+5. Schema-aware nested budgets allow conservative tool-call pruning,
+   aggressive final-answer pruning, and dense reflect recovery.
+6. Adaptive-B20 matches dense task success while reducing cost per successful task by 13.6%.
+```
+
+## 8. Next Work
+
+P3 benchmark sanity:
+
+```text
+WikiText-2 PPL
+PIQA
+HellaSwag
+ARC-Easy
+```
+
+Minimum benchmark matrix:
+
+```text
+Dense
+Nested 10%
+Nested 15% (optional)
+Nested 20% pressure test
+```
+
+Run:
+
+```bash
+python -u scripts/evaluate_static_benchmarks.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --local-files-only \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --calibration-path data/agent/schema_calibration_v1.jsonl \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p15.json \
+  --plan-name nested_0p15 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --benchmarks wikitext2 piqa hellaswag arc_easy \
+  --max-samples 256 \
+  --benchmark-version p3_static_v1 \
+  --output-dir outputs/agent_qwen2_5_3b_4090_low/static_benchmarks/p3_static_v1
+```
+
+This answers whether the Real Tool gain comes with unacceptable general-capability loss.
+
+P4 Qwen2.5-7B extension:
+
+```text
+Dense
+Nested uniform 10%
+Adaptive-B20
+Uniform 20% pressure test
+```
+
+First run 100-task Real Tool smoke. Only if stable, run the 1000-task matrix.
+
+Before Agent smoke, rebuild 7B plans from 7B activations:
+
+```bash
+python scripts/prepare_schema_calibration.py \
+  --tasks data/agent/real_tool_tasks_v1.jsonl \
+  --output data/agent/schema_calibration_v1.jsonl \
+  --max-tasks 500
+
+python scripts/build_pruning_substrate_v2.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --calibration-path data/agent/controlled_tasks.jsonl \
+  --schema-calibration-path data/agent/schema_calibration_v1.jsonl \
+  --max-calibration-prompts 512 \
+  --max-schema-calibration-prompts 1500 \
+  --target-budgets 0.10,0.20 \
+  --score-methods flap \
+  --nested-budget-ladder \
+  --schema-token-weight 1.0 \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_7b/substrate_v2_schema_nested
+```
+
+Generate the 20-task minimum smoke with at least five failure tasks:
+
+```bash
+python scripts/prepare_real_tool_tasks.py \
+  --output data/agent/real_tool_tasks_v1_7b_min_smoke_20.jsonl \
+  --count 20 \
+  --failure-count 5 \
+  --start-index 2000
+```
+
+Then run:
+
+```bash
+python -u scripts/evaluate_real_tool_loop.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --tasks data/agent/real_tool_tasks_v1_7b_min_smoke_20.jsonl \
+  --mask-bank-path outputs/agent_qwen2_5_7b/mask_bank/mask_bank.json \
+  --local-files-only \
+  --substrate-plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --substrate-name nested_0p10 \
+  --substrate-plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --substrate-name nested_0p20 \
+  --methods dense identity_hook nested_uniform_10 adaptive_B20 \
+  --output-prefix outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_p4_7b_min_smoke_20
+```
+
+P5 compact subnet / real latency:
+
+```text
+Materialize subnet_dense, subnet_10, and subnet_20.
+Physically slice gate_proj rows, up_proj rows, and down_proj columns.
+Measure tokens/s, decode latency/token, episode latency, P50/P95 latency,
+GPU memory, and subnet switch overhead.
+```
+
+Only after this step can the project discuss real wall-clock speedup.
+
+Theoretical subnet table command:
+
+```bash
+python scripts/summarize_subnet_theory.py \
+  --config configs/agent_qwen2_5_3b_4090.yaml \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_3b_4090_low/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_3b_4090_low/subnet_theory/p2c_subnet_theory.json \
+  --output-md outputs/agent_qwen2_5_3b_4090_low/subnet_theory/p2c_subnet_theory.md
+```
+
+Do not do now:
+
+```text
+Do not run old independent 5% or uniform 20% 1000.
+Do not keep tuning Qwen2.5-3B masks under the same setup.
+Do not expand the local tool set.
+Do not introduce TEAL or KV pruning yet.
+Do not run more same-configuration 1000-task experiments.
+Do not claim wall-clock speedup before compact subnet or kernel work.
+```

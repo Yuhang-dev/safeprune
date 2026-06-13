@@ -110,8 +110,10 @@ docs/real_tool_v1_results.md
 python scripts/analyze_real_tool_v1_results.py
 ```
 
-下一轮远端先跑 hidden-state centroid baseline，再进入 FLAP-style substrate v2
-和 3% / 5% / 10% global FFN budget ladder。
+后续 hidden-state centroid baseline、FLAP-style substrate v2、10% Real Tool
+1000 和 P2c schema-aware nested budget 1000 均已完成。当前远端主任务转为
+标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity，以及后续 compact FFN
+subnet / kernel；P2c 结果见 `docs/p2_substrate_and_p2c_results.md`。
 
 ### P1 hidden-state centroid baseline
 

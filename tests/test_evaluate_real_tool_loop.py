@@ -236,6 +236,36 @@ class EvaluateRealToolLoopTests(unittest.TestCase):
         self.assertEqual(reflect_route.selected_stage, "dense_fallback")
         self.assertAlmostEqual(reflect_route.active_ffn_ratio, 1.0)
 
+    def test_generation_type_b20_only_requires_10_and_20_percent_plans(self):
+        def substrate_plan(target, pruned):
+            plan = _plan(pruned)
+            plan["global_target"] = target
+            plan["budget_plan"] = {"global_target": target, "actual_sparsity": target}
+            return plan
+
+        specs = {}
+        config = types.SimpleNamespace(
+            agent=types.SimpleNamespace(
+                stages=["plan", "observe", "reflect", "answer"],
+                failure_events=["timeout"],
+                recovery_window_steps=2,
+            )
+        )
+        _register_substrate_specs(
+            specs,
+            substrate_plans=[
+                ("flap_0p10", substrate_plan(0.10, 10), "p10.json"),
+                ("flap_0p20", substrate_plan(0.20, 20), "p20.json"),
+            ],
+            identity_plan=_plan(0),
+            config=config,
+        )
+
+        self.assertIn("nested_uniform_10", specs)
+        self.assertIn("adaptive_B20", specs)
+        self.assertNotIn("adaptive_A", specs)
+        self.assertNotIn("adaptive_B15", specs)
+
     def test_hidden_centroid_can_use_sparse_reflect_plan(self):
         runtime = _hidden_runtime(reflect_mode="stage")
 

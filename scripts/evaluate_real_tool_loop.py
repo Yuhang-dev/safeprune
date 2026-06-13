@@ -51,6 +51,14 @@ REAL_TOOL_METHODS = [
     "adaptive_B15",
     "adaptive_B20",
 ]
+SUBSTRATE_ONLY_METHODS = {
+    "dense",
+    "identity_hook",
+    "nested_uniform_10",
+    "adaptive_A",
+    "adaptive_B15",
+    "adaptive_B20",
+}
 DEFAULT_REAL_TOOL_METHODS = [
     "dense",
     "identity_hook",
@@ -655,13 +663,10 @@ def _register_generation_type_specs(
         slug = _budget_slug_from_plan(plan)
         if slug is not None:
             by_budget[slug] = (name, plan, plan_path)
-    required = {"0p05", "0p10", "0p15", "0p20"}
-    if not required.issubset(by_budget):
-        return
 
-    budget_plans = {key: by_budget[key][1] for key in required}
-    budget_plan_names = {key: by_budget[key][0] for key in required}
-    budget_plan_paths = {key: by_budget[key][2] for key in required}
+    budget_plans = {key: value[1] for key, value in by_budget.items()}
+    budget_plan_names = {key: value[0] for key, value in by_budget.items()}
+    budget_plan_paths = {key: value[2] for key, value in by_budget.items()}
     common = {
         "mode": "generation_type_policy",
         "budget_plans": budget_plans,
@@ -669,22 +674,41 @@ def _register_generation_type_specs(
         "budget_plan_paths": budget_plan_paths,
         "fallback_plan": identity_plan,
     }
-    specs["nested_uniform_10"] = {
-        **common,
-        "generation_policy": GenerationRoutingPolicy("0p10", "0p10", "dense"),
+    if {"0p10"}.issubset(by_budget):
+        specs["nested_uniform_10"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p10", "0p10", "dense"),
+        }
+    if {"0p05", "0p15"}.issubset(by_budget):
+        specs["adaptive_A"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p05", "0p15", "dense"),
+        }
+    if {"0p10", "0p15"}.issubset(by_budget):
+        specs["adaptive_B15"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p10", "0p15", "dense"),
+        }
+    if {"0p10", "0p20"}.issubset(by_budget):
+        specs["adaptive_B20"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p10", "0p20", "dense"),
+        }
+
+
+def _minimal_substrate_specs(identity_plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        "dense": {"mode": "static", "plan": None, "plan_name": "dense"},
+        "identity_hook": {
+            "mode": "static",
+            "plan": identity_plan,
+            "plan_name": "identity_hook",
+        },
     }
-    specs["adaptive_A"] = {
-        **common,
-        "generation_policy": GenerationRoutingPolicy("0p05", "0p15", "dense"),
-    }
-    specs["adaptive_B15"] = {
-        **common,
-        "generation_policy": GenerationRoutingPolicy("0p10", "0p15", "dense"),
-    }
-    specs["adaptive_B20"] = {
-        **common,
-        "generation_policy": GenerationRoutingPolicy("0p10", "0p20", "dense"),
-    }
+
+
+def _can_skip_mask_bank(methods: list[str], substrate_plans: list[tuple[str, dict[str, Any], str]]) -> bool:
+    return bool(substrate_plans) and all(method in SUBSTRATE_ONLY_METHODS for method in methods)
 
 
 def _load_substrate_plans(
@@ -996,16 +1020,34 @@ def main() -> None:
     ) = _artifact_paths(output_prefix)
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading mask bank: {mask_bank_path}", flush=True)
-    mask_bank = load_stage_mask_bank(mask_bank_path)
-    specs = _extend_method_specs(
-        mask_bank,
-        config,
-        router_prefill_cost=args.centroid_router_prefill_cost,
-    )
     substrate_plans = _load_substrate_plans(args.substrate_plan, args.substrate_name)
-    if substrate_plans:
+    if mask_bank_path.exists():
+        print(f"Loading mask bank: {mask_bank_path}", flush=True)
+        mask_bank = load_stage_mask_bank(mask_bank_path)
+        specs = _extend_method_specs(
+            mask_bank,
+            config,
+            router_prefill_cost=args.centroid_router_prefill_cost,
+        )
         identity_plan = _empty_plan_like(mask_bank.select("observe", 0.01))
+    elif _can_skip_mask_bank(args.methods, substrate_plans):
+        print(
+            f"Skipping missing mask bank for substrate-only methods: {mask_bank_path}",
+            flush=True,
+        )
+        identity_plan = _empty_plan_like(substrate_plans[0][1])
+        specs = _minimal_substrate_specs(identity_plan)
+    else:
+        print(f"Loading mask bank: {mask_bank_path}", flush=True)
+        mask_bank = load_stage_mask_bank(mask_bank_path)
+        specs = _extend_method_specs(
+            mask_bank,
+            config,
+            router_prefill_cost=args.centroid_router_prefill_cost,
+        )
+        identity_plan = _empty_plan_like(mask_bank.select("observe", 0.01))
+
+    if substrate_plans:
         _register_substrate_specs(
             specs,
             substrate_plans=substrate_plans,
