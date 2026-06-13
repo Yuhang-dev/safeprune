@@ -372,6 +372,28 @@ python -u scripts/evaluate_static_benchmarks.py \
   --output-dir outputs/agent_qwen2_5_3b_4090_low/static_benchmarks/p3_static_v1
 ```
 
+Result:
+
+| Plan | Active MLP | ARC-Easy | HellaSwag | PIQA | WikiText-2 PPL |
+|---|---:|---:|---:|---:|---:|
+| Dense | 1.0000 | 0.6836 | 0.5312 | 0.8008 | 13.8088 |
+| Nested 10% | 0.9000 | 0.6719 | 0.5352 | 0.8008 | 13.9116 |
+| Nested 15% | 0.8500 | 0.6328 | 0.5156 | 0.7891 | 26.1213 |
+| Nested 20% | 0.8000 | 0.6445 | 0.4805 | 0.7539 | 36.4053 |
+
+Interpretation:
+
+```text
+Nested 10% preserves general benchmark sanity: WikiText-2 PPL is close to dense,
+PIQA is unchanged on the 256-sample sanity set, and ARC-Easy / HellaSwag only move slightly.
+
+Nested 15% and 20% are useful pressure points but should not be presented as
+generally safe static models. Their WikiText-2 PPL degradation is large.
+
+This supports the P2c routing story: 20% is acceptable only for selected
+final-answer Agent generations, not as a uniform static model.
+```
+
 This answers whether the Real Tool gain comes with unacceptable general-capability loss.
 
 P4 Qwen2.5-7B extension:
