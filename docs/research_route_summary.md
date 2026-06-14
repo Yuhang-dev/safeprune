@@ -105,6 +105,7 @@ scripts/evaluate_compact_subnet_equivalence.py
 scripts/benchmark_compact_subnet_latency.py
 scripts/analyze_compact_width_alignment.py
 scripts/benchmark_compact_mlp_micro.py
+scripts/build_hardware_aligned_compact_plans.py
 tests/test_compact.py
 ```
 
@@ -187,14 +188,26 @@ If MLP-only is not faster, the issue is shape/kernel efficiency. If MLP-only is
 faster but full-model generation is slower, the issue is wrapper/generation/
 benchmark overhead.
 
-4. Add compact task-level smoke after latency diagnostics:
+4. Build hardware-aligned compact plans:
+
+```text
+aligned_0p10 / aligned_0p20
+remaining width aligned to 128 or 256
+min_remaining >= 4096
+nested pruned sets preserved
+```
+
+Use these plans only for P5 latency engineering. They do not replace the frozen
+P4 Real Tool active-cost result.
+
+5. Add compact task-level smoke after aligned latency diagnostics:
 
 ```text
 compact_10 Real Tool smoke
 compact_20 Real Tool smoke as pressure test
 ```
 
-5. Only after that, implement dynamic Adaptive-B20 episode latency:
+6. Only after that, implement dynamic Adaptive-B20 episode latency:
 
 ```text
 tool-call/retry -> compact_10

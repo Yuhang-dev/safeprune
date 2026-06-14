@@ -598,6 +598,7 @@ scripts/evaluate_compact_subnet_equivalence.py
 scripts/benchmark_compact_subnet_latency.py
 scripts/analyze_compact_width_alignment.py
 scripts/benchmark_compact_mlp_micro.py
+scripts/build_hardware_aligned_compact_plans.py
 
 Materialize subnet_dense, subnet_10, and subnet_20.
 Physically slice gate_proj rows, up_proj rows, and down_proj columns.
@@ -620,8 +621,10 @@ dynamic Agent episode latency runner
 
 Next diagnostics: one-variant-per-process latency, actual new-token statistics,
 peak memory before/after load and materialization, MLP-only microbenchmark, and
-per-layer width-alignment report. Dynamic Agent latency must separately measure
-episode latency, P50/P95 latency, GPU memory, and subnet switch overhead.
+per-layer width-alignment report. If irregular widths explain the slowdown,
+build hardware-aligned compact plans before retrying full-model latency. Dynamic
+Agent latency must separately measure episode latency, P50/P95 latency, GPU
+memory, and subnet switch overhead.
 ```
 
 Only after this step can the project discuss real wall-clock speedup.

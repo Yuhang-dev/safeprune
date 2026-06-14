@@ -99,6 +99,8 @@ def main() -> None:
         metadata = None
         if spec["plan"] is not None:
             metadata = materialize_qwen_compact_mlp_subnet(model, spec["plan"])
+            gc.collect()
+            _empty_cuda_cache()
         memory_after_materialize = _cuda_memory_snapshot()
         model.eval()
         for batch_size in batch_sizes:

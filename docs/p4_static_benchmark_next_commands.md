@@ -449,3 +449,74 @@ python -u scripts/benchmark_compact_mlp_micro.py \
   --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/mlp_micro.json \
   --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/mlp_micro.md
 ```
+
+## P5 Hardware-Aligned Compact Plans
+
+The naive compact plan uses irregular per-layer widths and is slower than dense
+even in MLP-only microbenchmarks. The next P5 branch builds latency-oriented
+plans with hardware-aligned remaining widths. These plans are separate from the
+frozen P4 active-cost results.
+
+Build aligned 10% / 20% plans:
+
+```bash
+python -u scripts/build_hardware_aligned_compact_plans.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --scores-path outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/scores.json \
+  --activation-stats-path outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/ffn_activation_stats.json \
+  --target-budgets 0.10,0.20 \
+  --plan-prefix aligned \
+  --align-to 256 \
+  --min-remaining 4096 \
+  --with-bias-compensation \
+  --with-layer-scale-placeholder \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned
+```
+
+If `ffn_activation_stats.json` is missing, run without bias compensation first
+for latency diagnostics only:
+
+```bash
+python -u scripts/build_hardware_aligned_compact_plans.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --scores-path outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/scores.json \
+  --target-budgets 0.10,0.20 \
+  --plan-prefix aligned \
+  --align-to 256 \
+  --min-remaining 4096 \
+  --local-files-only \
+  --output-dir outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned
+```
+
+Then audit the aligned plans:
+
+```bash
+python -u scripts/analyze_compact_width_alignment.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p10.json \
+  --plan-name aligned_0p10 \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
+  --plan-name aligned_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/width_alignment.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/width_alignment.md
+```
+
+Only if aligned MLP-only latency improves should full-model latency be retried:
+
+```bash
+python -u scripts/benchmark_compact_mlp_micro.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --layers 0,14,27 \
+  --shapes 1x1,1x128,4x128 \
+  --warmup-iters 10 \
+  --measure-iters 50 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p10.json \
+  --plan-name aligned_0p10 \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
+  --plan-name aligned_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/mlp_micro.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/mlp_micro.md
+```

@@ -45,6 +45,7 @@ scripts/evaluate_compact_subnet_equivalence.py
 scripts/benchmark_compact_subnet_latency.py
 scripts/analyze_compact_width_alignment.py
 scripts/benchmark_compact_mlp_micro.py
+scripts/build_hardware_aligned_compact_plans.py
 ```
 
 它们覆盖 runtime compact subnet materialization、mask-hook vs compact
@@ -71,7 +72,8 @@ P5 compact logits-only equivalence 100 prompts 已完成：
 
 因此当前 P5 口径必须是：compact materialization 和 logits/top-1
 equivalence 通过，但 naive runtime latency failed。下一步排查单进程单
-variant、生成 token 统计、显存阶段、宽度对齐和 MLP-only latency。
+variant、生成 token 统计、显存阶段、宽度对齐和 MLP-only latency；随后构建
+hardware-aligned compact plans，不要继续用不规则宽度计划做正式测速。
 
 7B static benchmark quick sanity 已完成：
 
