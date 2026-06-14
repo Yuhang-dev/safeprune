@@ -36,7 +36,9 @@ cost per successful task = total active FFN cost / successful tasks
 | Real Tool protocol v1.2 | `[DONE]` | 修复 7B lookup observation 后 final 丢 `owner_` 前缀的问题；strict parser/evaluator 不变。 |
 | P4 Qwen2.5-7B extension | `[DONE]` | protocol v1.2 1000 已完成；adaptive_B20 1000/1000，cost_per_success 1.9000，较 dense 降约 15.1%。 |
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
-| 7B static benchmark | `[NEXT]` | 补 dense / nested 10% / nested 20% 的 WikiText-2、PIQA、HellaSwag、ARC-Easy。 |
+| 7B static benchmark quick sanity | `[DONE]` | dense / nested 10% / nested 20% 的 256-sample WikiText-2、PIQA、HellaSwag、ARC-Easy 已完成；20% 静态通用能力退化明显，只能作为动态 final-answer budget。 |
+| 7B full static benchmark | `[OPTIONAL]` | 若需要论文最终通用能力表，再把 256 samples 扩到 1024 或 full validation。 |
+| 3B protocol v1.2 alignment | `[CONDITIONAL]` | 若最终论文主表同时展示 3B 与 7B，则补 3B protocol v1.2 1000；否则必须清楚标注不同 protocol version。 |
 | compact FFN / kernel | `[NEXT]` | 第一版只做 mask-based 算法验证；下一步物化 FFN-only compact subnet 才能测真实加速。 |
 
 ## 1. 为什么转向 Agent 动态 FFN
@@ -412,8 +414,16 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 `dense`、`identity_hook`、`nested_uniform_10`、`adaptive_B20`。
 14. `[DONE]` 修复 `_empty_plan_like()` stale bias compensation，补单测。
 15. `[DONE]` 定位 7B unit_convert schema 错误，加入 Real Tool protocol v1.1 hardening。
-16. `[NEXT]` 重跑 3B P2c 最小矩阵 sanity 和 7B protocol v1.1 dense/identity gate。
-17. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
+16. `[DONE]` 加入 Real Tool protocol v1.2 lookup observation-to-final hardening。
+17. `[DONE]` 跑通 7B protocol v1.2 100-task smoke 与 1000-task 最小矩阵：
+`dense`、`identity_hook`、`nested_uniform_10`、`adaptive_B20`。
+18. `[DONE]` 跑 7B static benchmark quick sanity：
+`dense`、`nested_0p10`、`nested_0p20`。
+19. `[DONE]` 生成 7B subnet theory table：
+remaining FFN channels、parameters、FFN MACs、theoretical FLOPs。
+20. `[CONDITIONAL]` 若论文主表跨 3B/7B，补 3B protocol v1.2 1000 对齐。
+21. `[NEXT]` P5 compact FFN subnet materialization、equivalence check、latency benchmark。
+22. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 P2c 已实现的入口：
 

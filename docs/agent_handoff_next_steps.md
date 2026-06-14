@@ -6,6 +6,7 @@
 
 ```text
 docs/p2_substrate_and_p2c_results.md
+docs/p4_static_benchmark_next_commands.md
 docs/real_tool_v1_results.md
 docs/controlled_mask_validation_v1.md
 docs/agent_mask_eval_results.md
@@ -23,13 +24,50 @@ Real Tool-Execution Agent Prune v1
 P1 hidden-state centroid baseline 1000
 P2 FLAP 10% substrate 1000
 P2c schema-aware nested adaptive routing 1000
+P4 Qwen2.5-7B Real Tool protocol v1.2 1000
 ```
 
 当前下一步：
 
 ```text
-标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity
-compact FFN subnet / kernel for real wall-clock speedup
+3B protocol v1.2 alignment 1000 if the final paper table compares 3B and 7B
+P5 compact FFN subnet / kernel for real wall-clock speedup
+```
+
+当前命令入口见 `docs/p4_static_benchmark_next_commands.md`。
+
+P5 第一阶段入口已实现：
+
+```text
+scripts/materialize_compact_subnet.py
+scripts/evaluate_compact_subnet_equivalence.py
+```
+
+它们只覆盖 runtime compact subnet materialization 和 mask-hook vs compact
+equivalence；latency benchmark 和 dynamic Agent switching 尚未实现。
+
+7B static benchmark quick sanity 已完成：
+
+| Plan | Active MLP | ARC-Easy | HellaSwag | PIQA | WikiText-2 PPL |
+|---|---:|---:|---:|---:|---:|
+| dense | 1.0000 | 0.7891 | 0.5820 | 0.8242 | 11.7030 |
+| nested_0p10 | 0.9000 | 0.7773 | 0.5508 | 0.7656 | 15.5519 |
+| nested_0p20 | 0.8000 | 0.7031 | 0.5273 | 0.7461 | 33.8450 |
+
+7B subnet theory table 已完成：
+
+| Name | Active FFN | Remaining channels | FFN MACs/token | Total FLOPs/token |
+|---|---:|---:|---:|---:|
+| dense | 1.0000 | 530432 | 5703204864 | 13050576896 |
+| nested_0p10 | 0.9000 | 477388 | 5132875776 | 11909918720 |
+| nested_0p20 | 0.8000 | 424345 | 4562557440 | 10769282048 |
+
+解释：
+
+```text
+7B static 20% 不是通用安全静态模型；PPL 和多选 benchmark 都明显退化。
+这不推翻 adaptive_B20 的 Real Tool 结果，而是说明 20% 应只作为动态 final-answer budget，
+tool-call/retry 保持 10%，reflect recovery 保持 dense。
 ```
 
 P2c 100-smoke 已通过：
@@ -338,7 +376,8 @@ tests/test_evaluate_real_tool_loop.py
 bias compensation 是设计内行为；但所有依赖 `identity_hook == dense` 或
 `reflect -> dense fallback` 的 sanity 结论都必须在修复后重跑确认。
 
-当前下一步不要跑 7B 100/1000。先做：
+这段 7B protocol debugging 已完成；不要再按下面的旧顺序重复跑同配置实验。
+历史执行顺序是：
 
 ```text
 1. 3B P2c 最小矩阵 sanity rerun。
@@ -369,7 +408,7 @@ schema_error feedback 给出正确 retry shape
 parser 仍然 strict，不放宽 JSON schema
 ```
 
-下一轮 7B 只重跑 dense/identity gate 和 20 条 minismoke，不直接跑 100。
+这一步已经完成，并继续推进到了 100-task smoke 与 1000-task正式矩阵。
 
 最新 7B 100-task smoke 诊断：
 
@@ -393,8 +432,15 @@ protocol v1.2 后，7B 100 smoke 与 1000 正式矩阵均已完成：
 | adaptive_B20 | 1000/1000 | 200/200 | 800/800 | 1.9000 | 1.0000 |
 
 `adaptive_B20` 相对 dense 的 active-FFN cost_per_success 降约 15.1%，且三类工具全满分。
-当前不要继续重复同配置 7B 1000；下一步是 7B 静态 benchmark、3B protocol v1.2 sanity 取舍、
-以及 compact subnet / latency。
+当前不要继续重复同配置 7B 1000；下一步固定为：
+
+```text
+1. 若论文主表同时展示 3B 和 7B，则补 3B protocol v1.2 1000 对齐。
+2. P5 compact subnet / latency。
+3. 若需要论文最终通用能力表，再把 7B static benchmark 从 256 samples 扩到 1024 或 full validation。
+```
+
+具体命令见 `docs/p4_static_benchmark_next_commands.md`。
 
 ## 2. 为什么要这样做
 
@@ -774,8 +820,8 @@ generation_collapse_rate = 0
 不要继续 full per-layer 20% / 30% mask。
 不要重新尝试 attention head pruning。
 不要声称 mask hook 有真实 wall-clock speedup。
-不要直接上 7B 1000；先跑 7B Real Tool 100 smoke。
-不要在修复后的 dense / identity_hook gate 通过前跑 7B Real Tool 100 smoke。
+不要重复同配置 7B protocol v1.2 Real Tool 1000。
+不要把 3B protocol v1 和 7B protocol v1.2 放进同一主表而不标注 protocol version。
 不要把远端输出 vendoring 到 src/。
 不要跳过 dense/identity 对齐检查。
 不要在 real tool smoke 不稳定时加入复杂工具或 stateful DB。
@@ -786,10 +832,11 @@ generation_collapse_rate = 0
 
 ```text
 读取 docs/agent_handoff_next_steps.md，
-然后继续 P2：
-5% allocation anomaly 已完成 audit；
-20% pressure smoke 已失败；
-10% Real Tool 1000 已完成，substrate_flap_0p10_stage_reflect_dense 为当前 P2 主结果；
-下一步实现 schema-aware nested budget plans 和 stage-dependent substrate routing，
-不要继续跑统一 20%。
+然后继续 P4/P5：
+7B Real Tool protocol v1.2 1000 已完成并冻结；
+adaptive_B20 为当前最强结果，1000/1000，cost_per_success 1.9000；
+不要重复跑同配置 7B Real Tool 1000；
+7B static benchmark quick sanity 和 subnet theory table 已完成；
+若最终主表跨 3B/7B，下一步补 3B protocol v1.2 1000；
+否则直接进入 P5 compact FFN subnet 与真实 latency。
 ```

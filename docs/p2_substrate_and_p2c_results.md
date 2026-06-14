@@ -430,15 +430,20 @@ It reduces active-FFN cost_per_success from 2.2390 to 1.9000, about 15.1%.
 
 This remains an active-FFN-cost result, not a wall-clock latency result.
 
-Suggested output prefixes:
+Command history and follow-up commands are centralized in
+`docs/p4_static_benchmark_next_commands.md`. Do not repeat the same 7B
+protocol v1.2 Real Tool 1000 matrix.
+
+Relevant output prefixes:
 
 ```text
-outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000_identityfix
 outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_protocol_v1_1_gate
 outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_minismoke_20_protocol_v1_1
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_smoke_100_protocol_v1_2
+outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_7b_1000_protocol_v1_2
 ```
 
-Reproduction command:
+3B P2c historical reproduction command:
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \
@@ -469,7 +474,8 @@ The paper story can now be written as:
 4. Explicit Agent trajectory events are reliable, near-zero-overhead routing signals.
 5. Schema-aware nested budgets allow conservative tool-call pruning,
    aggressive final-answer pruning, and dense reflect recovery.
-6. Adaptive-B20 matches dense task success while reducing cost per successful task by 13.6%.
+6. Adaptive-B20 matches dense task success while reducing cost per successful task
+   by 13.6% on the 3B P2c run and about 15.1% on the 7B protocol v1.2 run.
 ```
 
 ## 8. Next Work
@@ -536,72 +542,68 @@ final-answer Agent generations, not as a uniform static model.
 
 This answers whether the Real Tool gain comes with unacceptable general-capability loss.
 
-P4 Qwen2.5-7B extension:
+P4 Qwen2.5-7B extension is now complete for Real Tool protocol v1.2:
 
 ```text
-Dense
-Nested uniform 10%
-Adaptive-B20
-Uniform 20% pressure test
+dense / identity_hook / nested_uniform_10 / adaptive_B20 all reached 1000/1000.
+adaptive_B20 reduced active-FFN cost_per_success by about 15.1% versus dense.
 ```
 
-First run 100-task Real Tool smoke. Only if stable, run the 1000-task matrix.
+Do not rerun the same 7B protocol v1.2 Real Tool 1000 matrix. The 7B static
+quick sanity and subnet theory commands have completed.
 
-Before Agent smoke, rebuild 7B plans from 7B activations:
-
-```bash
-python scripts/prepare_schema_calibration.py \
-  --tasks data/agent/real_tool_tasks_v1.jsonl \
-  --output data/agent/schema_calibration_v1.jsonl \
-  --max-tasks 500
-
-python scripts/build_pruning_substrate_v2.py \
-  --config configs/agent_qwen2_5_7b.yaml \
-  --calibration-path data/agent/controlled_tasks.jsonl \
-  --schema-calibration-path data/agent/schema_calibration_v1.jsonl \
-  --max-calibration-prompts 512 \
-  --max-schema-calibration-prompts 1500 \
-  --target-budgets 0.10,0.20 \
-  --score-methods flap \
-  --nested-budget-ladder \
-  --schema-token-weight 1.0 \
-  --with-bias-compensation \
-  --with-layer-scale-placeholder \
-  --local-files-only \
-  --output-dir outputs/agent_qwen2_5_7b/substrate_v2_schema_nested
+```text
+1. Run 3B protocol v1.2 1000 only if the final paper table compares 3B and 7B.
+2. Otherwise proceed to P5 compact subnet materialization and latency.
+3. Expand 7B static benchmark beyond 256 samples only if a final general
+   benchmark table is needed.
 ```
 
-Generate the 20-task minimum smoke with at least five failure tasks:
+Use `docs/p4_static_benchmark_next_commands.md` for the exact commands.
 
-```bash
-python scripts/prepare_real_tool_tasks.py \
-  --output data/agent/real_tool_tasks_v1_7b_min_smoke_20.jsonl \
-  --count 20 \
-  --failure-count 5 \
-  --start-index 2000
-```
+P4 7B static benchmark quick sanity:
 
-Then run:
+| Plan | Active MLP | ARC-Easy | HellaSwag | PIQA | WikiText-2 PPL |
+|---|---:|---:|---:|---:|---:|
+| dense | 1.0000 | 0.7891 | 0.5820 | 0.8242 | 11.7030 |
+| nested_0p10 | 0.9000 | 0.7773 | 0.5508 | 0.7656 | 15.5519 |
+| nested_0p20 | 0.8000 | 0.7031 | 0.5273 | 0.7461 | 33.8450 |
 
-```bash
-python -u scripts/evaluate_real_tool_loop.py \
-  --config configs/agent_qwen2_5_7b.yaml \
-  --tasks data/agent/real_tool_tasks_v1_7b_min_smoke_20.jsonl \
-  --mask-bank-path outputs/agent_qwen2_5_7b/mask_bank/mask_bank.json \
-  --local-files-only \
-  --substrate-plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
-  --substrate-name nested_0p10 \
-  --substrate-plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
-  --substrate-name nested_0p20 \
-  --methods dense identity_hook nested_uniform_10 adaptive_B20 \
-  --output-prefix outputs/agent_qwen2_5_7b/real_tool_eval/real_tool_v1_p4_7b_min_smoke_20
+P4 7B subnet theory:
+
+| Name | Active FFN | Remaining channels | FFN MACs/token | Total FLOPs/token |
+|---|---:|---:|---:|---:|
+| dense | 1.0000 | 530432 | 5703204864 | 13050576896 |
+| nested_0p10 | 0.9000 | 477388 | 5132875776 | 11909918720 |
+| nested_0p20 | 0.8000 | 424345 | 4562557440 | 10769282048 |
+
+Interpretation:
+
+```text
+7B static 20% is not a generally safe static model; WikiText-2 PPL and
+multiple-choice accuracy degrade substantially.
+
+This does not contradict the Real Tool result. It sharpens the claim:
+adaptive_B20 is a dynamic Agent budget where 20% is reserved for final-answer
+generations, while schema-sensitive tool-call/retry steps stay at 10% and
+reflect recovery stays dense.
 ```
 
 P5 compact subnet / real latency:
 
 ```text
+First-stage materialization and equivalence scripts now exist:
+scripts/materialize_compact_subnet.py
+scripts/evaluate_compact_subnet_equivalence.py
+
 Materialize subnet_dense, subnet_10, and subnet_20.
 Physically slice gate_proj rows, up_proj rows, and down_proj columns.
+Check mask-hook vs compact equivalence before any latency claim.
+
+Next scripts still needed:
+benchmark_compact_subnet_latency.py
+dynamic Agent episode latency runner
+
 Measure tokens/s, decode latency/token, episode latency, P50/P95 latency,
 GPU memory, and subnet switch overhead.
 ```
