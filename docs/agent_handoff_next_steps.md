@@ -75,6 +75,10 @@ equivalence 通过，但 naive runtime latency failed。下一步排查单进程
 variant、生成 token 统计、显存阶段、宽度对齐和 MLP-only latency；随后构建
 hardware-aligned compact plans，不要继续用不规则宽度计划做正式测速。
 
+aligned_0p10 / aligned_0p20 的 MLP-only 结果显示 alignment 有改善但仍慢于
+dense。materializer 已调整为跳过无剪枝、无 compensation、scale=1 的层，避免
+对 dense-width 层引入 wrapper overhead。远端 pull 后应先重跑 aligned MLP-only。
+
 7B static benchmark quick sanity 已完成：
 
 | Plan | Active MLP | ARC-Easy | HellaSwag | PIQA | WikiText-2 PPL |

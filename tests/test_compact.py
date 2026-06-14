@@ -1,5 +1,14 @@
 import types
 import unittest
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from safeprune.compact import materialize_qwen_compact_mlp_subnet
 from safeprune.masks import attach_qwen_switchable_mlp_masks
@@ -96,6 +105,28 @@ class CompactSubnetTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "duplicate"):
             materialize_qwen_compact_mlp_subnet(model, _plan([1, 1]))
+
+    def test_compact_mlp_leaves_identity_layer_unwrapped(self):
+        model = _Model()
+        original_mlp = model.model.layers[0].mlp
+        plan = {
+            "plan_name": "identity",
+            "layers": [
+                {
+                    "layer": 0,
+                    "num_mlp_channels": 3,
+                    "pruned_mlp_channels": [],
+                    "mlp_output_bias_compensation": [],
+                    "mlp_output_scale": 1.0,
+                }
+            ],
+        }
+
+        metadata = materialize_qwen_compact_mlp_subnet(model, plan)
+
+        self.assertIs(model.model.layers[0].mlp, original_mlp)
+        self.assertFalse(metadata["layers"][0]["replaced"])
+        self.assertEqual(metadata["layers"][0]["remaining_channels"], 3)
 
 
 if __name__ == "__main__":

@@ -520,3 +520,16 @@ python -u scripts/benchmark_compact_mlp_micro.py \
   --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/mlp_micro.json \
   --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/mlp_micro.md
 ```
+
+Observed aligned MLP-only result:
+
+| Plan | B1 S1 | B1 S128 | B4 S128 |
+|---|---:|---:|---:|
+| dense | 0.220 ms | 0.495 ms | 0.883 ms |
+| aligned_0p10 | 0.477 ms | 0.585 ms | 1.401 ms |
+| aligned_0p20 | 0.443 ms | 0.527 ms | 1.250 ms |
+
+This improves over irregular compact but still does not beat dense. The
+materializer now skips layers that have no pruned channels, no compensation, and
+scale 1.0, avoiding wrapper overhead on dense-width layers. Re-run the aligned
+MLP-only benchmark after pulling the commit before trying full-model latency.

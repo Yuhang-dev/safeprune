@@ -16,6 +16,7 @@ class CompactLayerMetadata:
     pruned_channels: int
     has_bias_compensation: bool
     output_scale: float
+    replaced: bool
 
 
 def materialize_qwen_compact_mlp_subnet(
@@ -58,15 +59,6 @@ def materialize_qwen_compact_mlp_subnet(
         if not keep:
             raise ValueError(f"Layer {layer_idx}: compact MLP would have zero channels.")
 
-        keep_tensor = torch.tensor(
-            keep,
-            dtype=torch.long,
-            device=mlp.gate_proj.weight.device,
-        )
-        compact_gate = _slice_linear_rows(mlp.gate_proj, keep_tensor)
-        compact_up = _slice_linear_rows(mlp.up_proj, keep_tensor)
-        compact_down = _slice_linear_columns(mlp.down_proj, keep_tensor)
-
         compensation = layer_plan.get("mlp_output_bias_compensation") or []
         if compensation and len(compensation) != hidden_size:
             raise ValueError(
@@ -74,15 +66,26 @@ def materialize_qwen_compact_mlp_subnet(
                 f"does not match hidden size {hidden_size}."
             )
         output_scale = float(layer_plan.get("mlp_output_scale", 1.0))
+        should_replace = bool(pruned_set) or bool(compensation) or output_scale != 1.0
 
-        layer.mlp = _make_compact_qwen_mlp(
-            gate_proj=compact_gate,
-            up_proj=compact_up,
-            down_proj=compact_down,
-            act_fn=getattr(mlp, "act_fn"),
-            bias_compensation=compensation,
-            output_scale=output_scale,
-        )
+        if should_replace:
+            keep_tensor = torch.tensor(
+                keep,
+                dtype=torch.long,
+                device=mlp.gate_proj.weight.device,
+            )
+            compact_gate = _slice_linear_rows(mlp.gate_proj, keep_tensor)
+            compact_up = _slice_linear_rows(mlp.up_proj, keep_tensor)
+            compact_down = _slice_linear_columns(mlp.down_proj, keep_tensor)
+
+            layer.mlp = _make_compact_qwen_mlp(
+                gate_proj=compact_gate,
+                up_proj=compact_up,
+                down_proj=compact_down,
+                act_fn=getattr(mlp, "act_fn"),
+                bias_compensation=compensation,
+                output_scale=output_scale,
+            )
         metadata.append(
             CompactLayerMetadata(
                 layer=layer_idx,
@@ -91,6 +94,7 @@ def materialize_qwen_compact_mlp_subnet(
                 pruned_channels=len(pruned_set),
                 has_bias_compensation=bool(compensation),
                 output_scale=output_scale,
+                replaced=should_replace,
             )
         )
 
@@ -328,24 +332,27 @@ def _make_compact_qwen_mlp(
             bias = bias_compensation or [0.0] * hidden_size
             self.register_buffer(
                 "mlp_output_bias_compensation",
-                torch.tensor(bias, dtype=torch.float32).reshape(1, 1, hidden_size),
+                torch.tensor(
+                    bias,
+                    dtype=down_proj.weight.dtype,
+                    device=down_proj.weight.device,
+                ).reshape(1, 1, hidden_size),
                 persistent=True,
             )
             self.register_buffer(
                 "mlp_output_scale",
-                torch.tensor(float(output_scale), dtype=torch.float32),
+                torch.tensor(
+                    float(output_scale),
+                    dtype=down_proj.weight.dtype,
+                    device=down_proj.weight.device,
+                ),
                 persistent=True,
             )
 
         def forward(self, x):
             hidden = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
             output = self.down_proj(hidden)
-            bias = self.mlp_output_bias_compensation.to(
-                device=output.device,
-                dtype=output.dtype,
-            )
-            scale = self.mlp_output_scale.to(device=output.device, dtype=output.dtype)
-            return output * scale + bias
+            return output * self.mlp_output_scale + self.mlp_output_bias_compensation
 
     return _CompactQwenMLP()
 

@@ -188,7 +188,20 @@ If MLP-only is not faster, the issue is shape/kernel efficiency. If MLP-only is
 faster but full-model generation is slower, the issue is wrapper/generation/
 benchmark overhead.
 
-4. Build hardware-aligned compact plans:
+Hardware-aligned MLP-only microbenchmark status:
+
+| Plan | B1 S1 | B1 S128 | B4 S128 | Interpretation |
+|---|---:|---:|---:|---|
+| dense | 0.220 ms | 0.495 ms | 0.883 ms | Baseline |
+| aligned_0p10 | 0.477 ms | 0.585 ms | 1.401 ms | Improved vs irregular compact, still slower than dense |
+| aligned_0p20 | 0.443 ms | 0.527 ms | 1.250 ms | Improved vs irregular compact, still slower than dense |
+
+Alignment helped, especially for 20%, but it did not pass the MLP-only latency
+gate. The next implementation fix is to avoid wrapping layers that have no
+pruned channels, no compensation, and scale 1.0; those dense-width layers should
+stay on the original Qwen MLP path.
+
+4. Build or refine hardware-aligned compact plans:
 
 ```text
 aligned_0p10 / aligned_0p20
