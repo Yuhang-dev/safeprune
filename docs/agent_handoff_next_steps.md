@@ -85,6 +85,18 @@ hardware-aligned compact plans，不要继续用不规则宽度计划做正式�
 下一步是 aligned_0p20 compact equivalence 和 full-model single-subnet latency。
 通过前不要做 dynamic Adaptive-B20 latency。
 
+aligned_0p20 logits-only equivalence 已通过：
+
+```text
+active_mlp_ratio_actual = 0.799710
+logits_mean_abs_diff = 0.0914
+top1_match_rate = 1.0
+```
+
+首个 aligned_0p20 full-model latency 用的是 HF generate，生成了 32 个 token；
+旧 dense 对照生成 token 数不同，因此不可直接比较。下一轮必须用
+`--generation-mode fixed_decode`，分别测 dense / aligned_0p10 / aligned_0p20。
+
 7B static benchmark quick sanity 已完成：
 
 | Plan | Active MLP | ARC-Easy | HellaSwag | PIQA | WikiText-2 PPL |

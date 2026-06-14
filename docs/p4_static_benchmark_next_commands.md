@@ -536,6 +536,21 @@ equivalence.
 
 ### Aligned Compact Equivalence
 
+Run both aligned plans because Adaptive-B20 needs 10% for tool-call/retry and
+20% for final-answer generations.
+
+```bash
+python -u scripts/evaluate_compact_subnet_equivalence.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p10.json \
+  --plan-name aligned_0p10 \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 100 \
+  --skip-generation \
+  --local-files-only \
+  --output outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/equivalence_logits_100_aligned_0p10.json
+```
+
 ```bash
 python -u scripts/evaluate_compact_subnet_equivalence.py \
   --config configs/agent_qwen2_5_7b.yaml \
@@ -548,9 +563,21 @@ python -u scripts/evaluate_compact_subnet_equivalence.py \
   --output outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/equivalence_logits_100_aligned_0p20.json
 ```
 
+Observed aligned_0p20 logits-only equivalence:
+
+| Plan | Prompts | Active MLP | Max diff | Mean diff | Top-1 match |
+|---|---:|---:|---:|---:|---:|
+| aligned_0p20 | 100 | 0.799710 | 0.7500 | 0.0914 | 1.0000 |
+
 ### Aligned Full-Model Latency
 
-Run dense and aligned_0p20 in separate processes:
+The first aligned_0p20 full-model latency run used HF `generate()` and is
+inconclusive because output lengths can differ across variants. In the observed
+run aligned_0p20 generated all 32 requested tokens, while earlier dense runs
+stopped much earlier. For latency gating, use `--generation-mode fixed_decode`,
+which forces the same number of cached decode steps for every variant.
+
+Run dense, aligned_0p10, and aligned_0p20 in separate processes:
 
 ```bash
 python -u scripts/benchmark_compact_subnet_latency.py \
@@ -560,11 +587,12 @@ python -u scripts/benchmark_compact_subnet_latency.py \
   --max-prompts 16 \
   --batch-sizes 1 \
   --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
   --warmup-iters 5 \
   --measure-iters 10 \
   --local-files-only \
-  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_only_b1.json \
-  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_only_b1.md
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_fixed_decode_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_fixed_decode_b1.md
 ```
 
 ```bash
@@ -575,14 +603,34 @@ python -u scripts/benchmark_compact_subnet_latency.py \
   --max-prompts 16 \
   --batch-sizes 1 \
   --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p10.json \
+  --plan-name aligned_0p10 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p10_fixed_decode_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p10_fixed_decode_b1.md
+```
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
   --warmup-iters 5 \
   --measure-iters 10 \
   --local-files-only \
   --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
   --plan-name aligned_0p20 \
-  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_only_b1.json \
-  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_only_b1.md
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b1.md
 ```
 
-If aligned_0p20 full-model latency is faster and equivalence holds, run compact
-Real Tool smoke next. Do not run dynamic Adaptive-B20 latency before that.
+If aligned full-model fixed-decode latency is faster and equivalence holds, run
+compact Real Tool smoke next. Do not run dynamic Adaptive-B20 latency before
+that.

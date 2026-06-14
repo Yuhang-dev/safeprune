@@ -44,6 +44,15 @@ def main() -> None:
     parser.add_argument("--batch-sizes", default="1")
     parser.add_argument("--max-length", type=int)
     parser.add_argument("--decode-new-tokens", type=int, default=32)
+    parser.add_argument(
+        "--generation-mode",
+        choices=["generate", "fixed_decode"],
+        default="generate",
+        help=(
+            "Use HF generate(), which may stop at EOS, or run a fixed number "
+            "of cached one-token decode forwards for comparable latency."
+        ),
+    )
     parser.add_argument("--warmup-iters", type=int, default=2)
     parser.add_argument("--measure-iters", type=int, default=5)
     parser.add_argument("--local-files-only", action="store_true")
@@ -128,6 +137,7 @@ def main() -> None:
             generation = _measure_generate(
                 model=model,
                 encoded=encoded,
+                mode=args.generation_mode,
                 warmup_iters=args.warmup_iters,
                 measure_iters=args.measure_iters,
                 max_new_tokens=args.decode_new_tokens,
@@ -146,6 +156,7 @@ def main() -> None:
                 "padded_prompt_tokens": int(encoded["input_ids"].shape[1]),
                 "prompt_tokens": _value_stats(prompt_token_lengths),
                 "decode_new_tokens_requested": args.decode_new_tokens,
+                "generation_mode": args.generation_mode,
                 "active_mlp_ratio": (
                     metadata["active_mlp_ratio_actual"] if metadata else 1.0
                 ),
@@ -167,8 +178,10 @@ def main() -> None:
                 ),
                 "peak_memory_bytes": _peak_cuda_memory(),
                 "note": (
-                    "Generate timing includes prefill; decode latency is approximated "
-                    "as (generate - prefill) / decode_new_tokens."
+                    "Generation timing includes prefill. In generate mode, output "
+                    "length may stop at EOS. In fixed_decode mode, the script runs "
+                    "exactly decode_new_tokens cached one-token forward steps after "
+                    "prefill."
                 ),
             }
             rows.append(row)
@@ -185,6 +198,7 @@ def main() -> None:
         "prompts_jsonl": args.prompts_jsonl,
         "max_prompts": args.max_prompts,
         "max_length": max_length,
+        "generation_mode": args.generation_mode,
         "warmup_iters": args.warmup_iters,
         "measure_iters": args.measure_iters,
         "rows": rows,
@@ -227,12 +241,24 @@ def _measure_generate(
     *,
     model,
     encoded,
+    mode: str,
     warmup_iters: int,
     measure_iters: int,
     max_new_tokens: int,
     pad_token_id: int | None,
     eos_token_id: int | list[int] | None,
 ) -> dict[str, Any]:
+    if mode == "fixed_decode":
+        return _measure_fixed_decode(
+            model=model,
+            encoded=encoded,
+            warmup_iters=warmup_iters,
+            measure_iters=measure_iters,
+            decode_steps=max_new_tokens,
+        )
+    if mode != "generate":
+        raise ValueError(f"Unsupported generation mode: {mode}")
+
     torch = _require_torch()
     generate_kwargs = {
         **encoded,
@@ -278,6 +304,77 @@ def _measure_generate(
         }
     )
     return stats
+
+
+def _measure_fixed_decode(
+    *,
+    model,
+    encoded,
+    warmup_iters: int,
+    measure_iters: int,
+    decode_steps: int,
+) -> dict[str, Any]:
+    torch = _require_torch()
+    if decode_steps <= 0:
+        raise ValueError("--decode-new-tokens must be positive for fixed_decode mode.")
+    with torch.no_grad():
+        for _ in range(warmup_iters):
+            _sync_cuda()
+            _run_fixed_decode_once(model=model, encoded=encoded, decode_steps=decode_steps)
+            _sync_cuda()
+        timings = []
+        _reset_cuda_peak_memory()
+        for _ in range(measure_iters):
+            _sync_cuda()
+            start = time.perf_counter()
+            _run_fixed_decode_once(model=model, encoded=encoded, decode_steps=decode_steps)
+            _sync_cuda()
+            timings.append((time.perf_counter() - start) * 1000.0)
+    stats = _latency_stats(timings)
+    batch_size = int(encoded["input_ids"].shape[0])
+    new_token_counts = [decode_steps for _ in range(batch_size * measure_iters)]
+    stats.update(
+        {
+            "new_tokens": _value_stats(new_token_counts),
+            "new_tokens_mean": float(decode_steps),
+            "new_tokens_min": decode_steps,
+            "new_tokens_max": decode_steps,
+            "eos_rate": None,
+            "fixed_decode_steps": decode_steps,
+        }
+    )
+    return stats
+
+
+def _run_fixed_decode_once(*, model, encoded, decode_steps: int) -> None:
+    torch = _require_torch()
+    prefill_kwargs = {**encoded, "use_cache": True}
+    outputs = model(**prefill_kwargs)
+    past_key_values = outputs.past_key_values
+    next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1, keepdim=True)
+    attention_mask = encoded.get("attention_mask")
+    for _ in range(decode_steps):
+        decode_kwargs = {
+            "input_ids": next_token,
+            "past_key_values": past_key_values,
+            "use_cache": True,
+        }
+        if attention_mask is not None:
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones(
+                        (attention_mask.shape[0], 1),
+                        dtype=attention_mask.dtype,
+                        device=attention_mask.device,
+                    ),
+                ],
+                dim=1,
+            )
+            decode_kwargs["attention_mask"] = attention_mask
+        outputs = model(**decode_kwargs)
+        past_key_values = outputs.past_key_values
+        next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1, keepdim=True)
 
 
 def _latency_stats(values: list[float]) -> dict[str, Any]:
@@ -341,6 +438,7 @@ def _summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "name": row["name"],
             "batch_size": row["batch_size"],
             "active_mlp_ratio": row["active_mlp_ratio"],
+            "generation_mode": row["generation_mode"],
             "prompt_tokens_mean": row["prompt_tokens"]["mean"],
             "new_tokens_mean": row["generate"]["new_tokens_mean"],
             "eos_rate": row["generate"]["eos_rate"],
@@ -360,8 +458,8 @@ def _summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _to_markdown(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Name | Batch | Active MLP | Prompt tok mean | New tok mean | EOS rate | Prefill ms | Generate ms | Approx decode ms/token | Approx decode tok/s | Peak GB |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Name | Mode | Batch | Active MLP | Prompt tok mean | New tok mean | EOS rate | Prefill ms | Generate ms | Approx decode ms/token | Approx decode tok/s | Peak GB |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         peak = row["peak_memory_bytes"]
@@ -370,11 +468,14 @@ def _to_markdown(rows: list[dict[str, Any]]) -> str:
             + " | ".join(
                 [
                     row["name"],
+                    row["generation_mode"],
                     str(row["batch_size"]),
                     f"{row['active_mlp_ratio']:.4f}",
                     f"{row['prompt_tokens']['mean']:.1f}",
                     f"{row['generate']['new_tokens_mean']:.1f}",
-                    f"{row['generate']['eos_rate']:.3f}",
+                    f"{row['generate']['eos_rate']:.3f}"
+                    if row["generate"]["eos_rate"] is not None
+                    else "N/A",
                     f"{row['prefill']['latency_ms_mean']:.3f}",
                     f"{row['generate']['latency_ms_mean']:.3f}",
                     f"{row['approx_decode_latency_ms_per_token']:.3f}",
