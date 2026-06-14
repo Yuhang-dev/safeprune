@@ -563,10 +563,11 @@ python -u scripts/evaluate_compact_subnet_equivalence.py \
   --output outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/equivalence_logits_100_aligned_0p20.json
 ```
 
-Observed aligned_0p20 logits-only equivalence:
+Observed aligned logits-only equivalence:
 
 | Plan | Prompts | Active MLP | Max diff | Mean diff | Top-1 match |
 |---|---:|---:|---:|---:|---:|
+| aligned_0p10 | 100 | 0.899614 | 0.6563 | 0.0828 | 1.0000 |
 | aligned_0p20 | 100 | 0.799710 | 0.7500 | 0.0914 | 1.0000 |
 
 ### Aligned Full-Model Latency
@@ -634,3 +635,69 @@ python -u scripts/benchmark_compact_subnet_latency.py \
 If aligned full-model fixed-decode latency is faster and equivalence holds, run
 compact Real Tool smoke next. Do not run dynamic Adaptive-B20 latency before
 that.
+
+Observed fixed-decode batch-1 full-model latency:
+
+| Plan | Active MLP | Decode ms/token | Tok/s | Peak GB | Interpretation |
+|---|---:|---:|---:|---:|---|
+| dense | 1.0000 | 26.226 | 38.130 | 8.266 | Baseline |
+| aligned_0p10 | 0.8996 | 25.497 | 39.220 | 7.993 | Slightly faster, about 2.8% |
+| aligned_0p20 | 0.7997 | 26.680 | 37.481 | 7.857 | Slightly slower, not a speedup |
+
+This is not yet enough for a wall-clock claim. It shows that MLP-only speedups
+are mostly diluted in batch-1 full-model decode, while memory decreases
+slightly. Continue with batch/sequence scaling before task-level compact smoke.
+
+### Fixed-Decode Batch 4 Check
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant dense \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 4 \
+  --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_fixed_decode_b4.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_fixed_decode_b4.md
+```
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 4 \
+  --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p10.json \
+  --plan-name aligned_0p10 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p10_fixed_decode_b4.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p10_fixed_decode_b4.md
+```
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 4 \
+  --decode-new-tokens 32 \
+  --generation-mode fixed_decode \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
+  --plan-name aligned_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b4.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b4.md
+```

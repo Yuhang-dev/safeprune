@@ -201,18 +201,28 @@ MLP-only latency gate. It is now reasonable to retry full-model single-subnet
 latency for aligned_0p20 and to run aligned compact equivalence before any task
 or dynamic latency claim.
 
-Aligned_0p20 logits-only compact equivalence on 100 prompts also passed:
+Aligned logits-only compact equivalence on 100 prompts also passed:
 
 ```text
-active_mlp_ratio_actual = 0.799710
-logits_mean_abs_diff = 0.0914
-top1_match_rate = 1.0
+aligned_0p10 active_mlp_ratio_actual = 0.899614, mean diff = 0.0828, top1 = 1.0
+aligned_0p20 active_mlp_ratio_actual = 0.799710, mean diff = 0.0914, top1 = 1.0
 ```
 
 The first aligned_0p20 full-model latency run used HF `generate()` and produced
 32 new tokens. Because dense can stop earlier on the same prompts, full-model
 latency must now be measured with fixed-step decode before drawing a speedup
 conclusion.
+
+Fixed-decode batch-1 full-model latency:
+
+| Plan | Decode ms/token | Tok/s | Peak GB | Interpretation |
+|---|---:|---:|---:|---|
+| dense | 26.226 | 38.130 | 8.266 | Baseline |
+| aligned_0p10 | 25.497 | 39.220 | 7.993 | Slight speedup, about 2.8% |
+| aligned_0p20 | 26.680 | 37.481 | 7.857 | Slightly slower than dense |
+
+This means MLP-only speedups are not yet full-model speedups at batch-1 decode.
+Next check batch 4 and longer prompts before compact task-level smoke.
 
 4. Build or refine hardware-aligned compact plans:
 

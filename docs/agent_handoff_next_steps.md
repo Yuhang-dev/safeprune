@@ -88,14 +88,24 @@ hardware-aligned compact plans，不要继续用不规则宽度计划做正式�
 aligned_0p20 logits-only equivalence 已通过：
 
 ```text
-active_mlp_ratio_actual = 0.799710
-logits_mean_abs_diff = 0.0914
-top1_match_rate = 1.0
+aligned_0p10: active_mlp_ratio_actual = 0.899614, mean diff = 0.0828, top1 = 1.0
+aligned_0p20: active_mlp_ratio_actual = 0.799710, mean diff = 0.0914, top1 = 1.0
 ```
 
 首个 aligned_0p20 full-model latency 用的是 HF generate，生成了 32 个 token；
 旧 dense 对照生成 token 数不同，因此不可直接比较。下一轮必须用
 `--generation-mode fixed_decode`，分别测 dense / aligned_0p10 / aligned_0p20。
+
+fixed-decode batch-1 已完成：
+
+| Plan | Decode ms/token | Tok/s | Peak GB |
+|---|---:|---:|---:|
+| dense | 26.226 | 38.130 | 8.266 |
+| aligned_0p10 | 25.497 | 39.220 | 7.993 |
+| aligned_0p20 | 26.680 | 37.481 | 7.857 |
+
+当前只能说 aligned_0p10 有轻微 full-model decode speedup，aligned_0p20 没有；
+下一步测 batch=4 / longer prompt，不要直接进 dynamic latency。
 
 7B static benchmark quick sanity 已完成：
 
