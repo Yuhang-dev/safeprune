@@ -30,6 +30,15 @@ def main() -> None:
     parser.add_argument("--plan", action="append", default=[])
     parser.add_argument("--plan-name", action="append", default=[])
     parser.add_argument("--no-dense", action="store_true")
+    parser.add_argument(
+        "--variant",
+        choices=["all", "dense", "compact"],
+        default="all",
+        help=(
+            "Benchmark all requested variants, only dense, or exactly one compact "
+            "plan. Use dense/compact for single-model single-process latency checks."
+        ),
+    )
     parser.add_argument("--prompts-jsonl", required=True)
     parser.add_argument("--max-prompts", type=int, default=32)
     parser.add_argument("--batch-sizes", default="1")
@@ -44,6 +53,10 @@ def main() -> None:
 
     if len(args.plan) != len(args.plan_name):
         raise ValueError("--plan-name must be provided once per --plan.")
+    if args.variant == "dense" and (args.no_dense or args.plan):
+        raise ValueError("--variant dense must not be combined with --no-dense or --plan.")
+    if args.variant == "compact" and len(args.plan) != 1:
+        raise ValueError("--variant compact requires exactly one --plan/--plan-name pair.")
     if args.measure_iters <= 0:
         raise ValueError("--measure-iters must be positive.")
     if args.warmup_iters < 0:
@@ -57,22 +70,36 @@ def main() -> None:
     max_length = args.max_length or config.data.max_length
 
     specs = []
-    if not args.no_dense:
+    if args.variant == "dense":
         specs.append({"name": "dense", "path": None, "plan": None})
-    for path, name in zip(args.plan, args.plan_name, strict=True):
-        specs.append({"name": name, "path": path, "plan": load_plan(path)})
+    elif args.variant == "compact":
+        specs.append(
+            {
+                "name": args.plan_name[0],
+                "path": args.plan[0],
+                "plan": load_plan(args.plan[0]),
+            }
+        )
+    elif not args.no_dense:
+        specs.append({"name": "dense", "path": None, "plan": None})
+    if args.variant == "all":
+        for path, name in zip(args.plan, args.plan_name, strict=True):
+            specs.append({"name": name, "path": path, "plan": load_plan(path)})
 
     rows = []
     for spec in specs:
         print(f"\nPLAN {spec['name']}", flush=True)
+        memory_before_load = _cuda_memory_snapshot()
         model, tokenizer = load_causal_lm_and_tokenizer(
             config.model.base_model,
             config.model,
             local_files_only=args.local_files_only,
         )
+        memory_after_load = _cuda_memory_snapshot()
         metadata = None
         if spec["plan"] is not None:
             metadata = materialize_qwen_compact_mlp_subnet(model, spec["plan"])
+        memory_after_materialize = _cuda_memory_snapshot()
         model.eval()
         for batch_size in batch_sizes:
             print(f"Benchmarking {spec['name']} batch={batch_size}", flush=True)
@@ -86,6 +113,10 @@ def main() -> None:
             )
             device = next(model.parameters()).device
             encoded = {key: value.to(device) for key, value in encoded.items()}
+            prompt_token_lengths = [
+                int(value)
+                for value in encoded["attention_mask"].sum(dim=1).detach().cpu().tolist()
+            ]
             prefill = _measure_prefill(
                 model=model,
                 encoded=encoded,
@@ -99,30 +130,35 @@ def main() -> None:
                 measure_iters=args.measure_iters,
                 max_new_tokens=args.decode_new_tokens,
                 pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
             )
             approximate_decode_ms = max(
                 0.0,
                 generation["latency_ms_mean"] - prefill["latency_ms_mean"],
             )
+            measured_new_tokens = generation.get("new_tokens_mean") or args.decode_new_tokens
             row = {
                 "name": spec["name"],
                 "plan_path": spec["path"],
                 "batch_size": batch_size,
-                "prompt_tokens": int(encoded["input_ids"].shape[1]),
-                "decode_new_tokens": args.decode_new_tokens,
+                "padded_prompt_tokens": int(encoded["input_ids"].shape[1]),
+                "prompt_tokens": _value_stats(prompt_token_lengths),
+                "decode_new_tokens_requested": args.decode_new_tokens,
                 "active_mlp_ratio": (
                     metadata["active_mlp_ratio_actual"] if metadata else 1.0
                 ),
                 "compact_metadata": metadata,
+                "memory_before_load": memory_before_load,
+                "memory_after_load": memory_after_load,
+                "memory_after_materialize": memory_after_materialize,
                 "prefill": prefill,
                 "generate": generation,
                 "approx_decode_latency_ms_per_token": approximate_decode_ms
-                / args.decode_new_tokens
-                if args.decode_new_tokens
+                / measured_new_tokens
+                if measured_new_tokens
                 else None,
                 "approx_decode_tokens_per_second": (
-                    batch_size
-                    * args.decode_new_tokens
+                    batch_size * measured_new_tokens
                     / (approximate_decode_ms / 1000.0)
                     if approximate_decode_ms > 0
                     else None
@@ -143,6 +179,7 @@ def main() -> None:
         "format": "safeprune.compact_latency.v1",
         "config": args.config,
         "base_model": config.model.base_model,
+        "variant": args.variant,
         "prompts_jsonl": args.prompts_jsonl,
         "max_prompts": args.max_prompts,
         "max_length": max_length,
@@ -192,6 +229,7 @@ def _measure_generate(
     measure_iters: int,
     max_new_tokens: int,
     pad_token_id: int | None,
+    eos_token_id: int | list[int] | None,
 ) -> dict[str, Any]:
     torch = _require_torch()
     generate_kwargs = {
@@ -207,14 +245,37 @@ def _measure_generate(
             _ = model.generate(**generate_kwargs)
             _sync_cuda()
         timings = []
+        new_token_counts = []
+        eos_hits = 0
+        total_sequences = 0
         _reset_cuda_peak_memory()
         for _ in range(measure_iters):
             _sync_cuda()
             start = time.perf_counter()
-            _ = model.generate(**generate_kwargs)
+            output_ids = model.generate(**generate_kwargs)
             _sync_cuda()
             timings.append((time.perf_counter() - start) * 1000.0)
-    return _latency_stats(timings)
+            counts, hits = _generated_token_counts(
+                output_ids=output_ids,
+                prompt_width=int(encoded["input_ids"].shape[1]),
+                eos_token_id=eos_token_id,
+            )
+            new_token_counts.extend(counts)
+            eos_hits += hits
+            total_sequences += len(counts)
+    stats = _latency_stats(timings)
+    stats.update(
+        {
+            "new_tokens": _value_stats(new_token_counts),
+            "new_tokens_mean": (
+                statistics.fmean(new_token_counts) if new_token_counts else 0.0
+            ),
+            "new_tokens_min": min(new_token_counts) if new_token_counts else 0,
+            "new_tokens_max": max(new_token_counts) if new_token_counts else 0,
+            "eos_rate": eos_hits / total_sequences if total_sequences else 0.0,
+        }
+    )
+    return stats
 
 
 def _latency_stats(values: list[float]) -> dict[str, Any]:
@@ -227,6 +288,37 @@ def _latency_stats(values: list[float]) -> dict[str, Any]:
         "latency_ms_max": max(values),
         "samples": values,
     }
+
+
+def _value_stats(values: list[int | float]) -> dict[str, Any]:
+    if not values:
+        return {"mean": 0.0, "min": 0, "max": 0, "samples": []}
+    return {
+        "mean": statistics.fmean(values),
+        "min": min(values),
+        "max": max(values),
+        "samples": values,
+    }
+
+
+def _generated_token_counts(*, output_ids, prompt_width: int, eos_token_id) -> tuple[list[int], int]:
+    eos_ids: set[int] = set()
+    if isinstance(eos_token_id, int):
+        eos_ids.add(eos_token_id)
+    elif isinstance(eos_token_id, list):
+        eos_ids.update(int(item) for item in eos_token_id)
+    generated = output_ids[:, prompt_width:]
+    counts: list[int] = []
+    eos_hits = 0
+    for row in generated.detach().cpu().tolist():
+        count = len(row)
+        for idx, token_id in enumerate(row):
+            if token_id in eos_ids:
+                count = idx + 1
+                eos_hits += 1
+                break
+        counts.append(count)
+    return counts, eos_hits
 
 
 def _percentile(ordered: list[float], q: float) -> float:
@@ -247,6 +339,9 @@ def _summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "name": row["name"],
             "batch_size": row["batch_size"],
             "active_mlp_ratio": row["active_mlp_ratio"],
+            "prompt_tokens_mean": row["prompt_tokens"]["mean"],
+            "new_tokens_mean": row["generate"]["new_tokens_mean"],
+            "eos_rate": row["generate"]["eos_rate"],
             "prefill_ms_mean": row["prefill"]["latency_ms_mean"],
             "generate_ms_mean": row["generate"]["latency_ms_mean"],
             "approx_decode_ms_per_token": row["approx_decode_latency_ms_per_token"],
@@ -263,8 +358,8 @@ def _summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _to_markdown(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Name | Batch | Active MLP | Prompt tokens | Prefill ms | Generate ms | Approx decode ms/token | Approx decode tok/s | Peak GB |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Name | Batch | Active MLP | Prompt tok mean | New tok mean | EOS rate | Prefill ms | Generate ms | Approx decode ms/token | Approx decode tok/s | Peak GB |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         peak = row["peak_memory_bytes"]
@@ -275,7 +370,9 @@ def _to_markdown(rows: list[dict[str, Any]]) -> str:
                     row["name"],
                     str(row["batch_size"]),
                     f"{row['active_mlp_ratio']:.4f}",
-                    str(row["prompt_tokens"]),
+                    f"{row['prompt_tokens']['mean']:.1f}",
+                    f"{row['generate']['new_tokens_mean']:.1f}",
+                    f"{row['generate']['eos_rate']:.3f}",
                     f"{row['prefill']['latency_ms_mean']:.3f}",
                     f"{row['generate']['latency_ms_mean']:.3f}",
                     f"{row['approx_decode_latency_ms_per_token']:.3f}",
@@ -308,6 +405,28 @@ def _peak_cuda_memory() -> int | None:
     if not torch.cuda.is_available():
         return None
     return max(torch.cuda.max_memory_allocated(idx) for idx in range(torch.cuda.device_count()))
+
+
+def _cuda_memory_snapshot() -> dict[str, Any] | None:
+    torch = _require_torch()
+    if not torch.cuda.is_available():
+        return None
+    devices = []
+    for idx in range(torch.cuda.device_count()):
+        devices.append(
+            {
+                "device": idx,
+                "allocated_bytes": int(torch.cuda.memory_allocated(idx)),
+                "reserved_bytes": int(torch.cuda.memory_reserved(idx)),
+                "max_allocated_bytes": int(torch.cuda.max_memory_allocated(idx)),
+            }
+        )
+    return {
+        "devices": devices,
+        "total_allocated_bytes": sum(item["allocated_bytes"] for item in devices),
+        "total_reserved_bytes": sum(item["reserved_bytes"] for item in devices),
+        "max_allocated_bytes": max(item["max_allocated_bytes"] for item in devices),
+    }
 
 
 def _empty_cuda_cache() -> None:

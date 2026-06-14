@@ -43,10 +43,13 @@ P5 第一阶段入口已实现：
 scripts/materialize_compact_subnet.py
 scripts/evaluate_compact_subnet_equivalence.py
 scripts/benchmark_compact_subnet_latency.py
+scripts/analyze_compact_width_alignment.py
+scripts/benchmark_compact_mlp_micro.py
 ```
 
 它们覆盖 runtime compact subnet materialization、mask-hook vs compact
-equivalence，以及单子网 latency smoke；dynamic Agent switching 尚未实现。
+equivalence、单子网 latency smoke、width alignment audit 和 MLP-only
+microbenchmark；dynamic Agent switching 尚未实现。
 
 P5 compact logits-only equivalence 100 prompts 已完成：
 
@@ -57,6 +60,18 @@ P5 compact logits-only equivalence 100 prompts 已完成：
 
 下一步先跑 single-subnet latency smoke，再做 compact Real Tool smoke；不要把
 单子网测速直接写成 Adaptive-B20 episode latency。
+
+首轮 batch-1 naive latency smoke 已暴露负结果：
+
+| Model | Decode ms/token | Tok/s | Peak GB |
+|---|---:|---:|---:|
+| dense | 4.304 | 232.316 | 8.266 |
+| compact nested_0p10 | 6.403 | 156.184 | 14.093 |
+| compact nested_0p20 | 15.401 | 64.933 | 13.920 |
+
+因此当前 P5 口径必须是：compact materialization 和 logits/top-1
+equivalence 通过，但 naive runtime latency failed。下一步排查单进程单
+variant、生成 token 统计、显存阶段、宽度对齐和 MLP-only latency。
 
 7B static benchmark quick sanity 已完成：
 

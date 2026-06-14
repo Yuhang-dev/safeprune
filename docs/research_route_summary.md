@@ -47,7 +47,7 @@ until compact subnet latency is measured.
 | P2c Generation-Type Routing | Can different generation types use different budgets? | 3B Adaptive-B20 matches dense at 997/1000 and reduces cost_per_success by about 13.6% | Tool-call and final-answer generations have different FFN budget tolerance. |
 | P4 7B Extension | Does the result scale to Qwen2.5-7B? | 7B Adaptive-B20 reaches 1000/1000 under strict protocol v1.2, cost_per_success 2.2390 -> 1.9000, about 15.1% lower | The strongest current result: dense-equivalent task success with lower active FFN cost. |
 | P4 Static Benchmark | Is 20% safe as a static general model? | 7B nested_0p20 PPL rises from 11.7030 to 33.8450; MC accuracy drops | 20% is not a universal static compression setting; it should be used only as a dynamic final-answer budget. |
-| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | First-stage materialization implemented; 10%/20% compact preserve active ratio and 100% top-1 logits on 100 prompts; greedy exact drifts | Structure/logits equivalence is correct so far; single-subnet latency and task-level compact validation are next. |
+| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | First-stage materialization implemented; 10%/20% compact preserve active ratio and 100% top-1 logits on 100 prompts; naive latency smoke is slower than dense | Structure/logits equivalence is correct, but the current runtime path is not performance-ready; isolate memory, wrapper, and shape-alignment artifacts before any speedup claim. |
 
 ## 3. Current Best Result
 
@@ -103,6 +103,8 @@ src/safeprune/compact.py
 scripts/materialize_compact_subnet.py
 scripts/evaluate_compact_subnet_equivalence.py
 scripts/benchmark_compact_subnet_latency.py
+scripts/analyze_compact_width_alignment.py
+scripts/benchmark_compact_mlp_micro.py
 tests/test_compact.py
 ```
 
@@ -122,7 +124,7 @@ compact structure: pass
 compact logits/top1 equivalence: pass so far
 compact greedy exact equivalence: not suitable as a strict pass/fail metric
 compact task-level equivalence: not yet tested
-latency: not yet tested
+naive latency: failed / slower than dense
 ```
 
 Greedy exact match is brittle because small bf16 numerical differences can
@@ -131,7 +133,26 @@ planned active ratio and last-token top-1 logits so far.
 
 ## 6. Immediate Next Steps
 
-1. Run single-subnet latency smoke:
+Naive batch-1 single-subnet latency smoke:
+
+| Model | Active MLP | Prefill ms | Decode ms/token | Tok/s | Peak GB |
+|---|---:|---:|---:|---:|---:|
+| dense | 1.0000 | 28.803 | 4.304 | 232.316 | 8.266 |
+| nested_0p10 compact | 0.9000 | 41.532 | 6.403 | 156.184 | 14.093 |
+| nested_0p20 compact | 0.8000 | 40.268 | 15.401 | 64.933 | 13.920 |
+
+Interpretation:
+
+```text
+Do not claim wall-clock speedup.
+
+The compact subnet is structurally valid, but the naive runtime path is slower
+and uses more peak memory. Likely causes include same-process memory artifacts,
+custom wrapper overhead, irregular GEMM shapes, and generation/token-length
+measurement artifacts.
+```
+
+1. Re-run latency as one variant per Python process:
 
 ```text
 dense
@@ -139,22 +160,41 @@ compact_10
 compact_20
 ```
 
-Report only:
+Goal:
 
 ```text
-single-subnet latency / speed potential
+confirm whether the high compact memory and slow latency persist without
+same-process dense -> compact -> compact interference
 ```
 
-Do not report Adaptive-B20 latency from single-subnet measurements.
+2. Run compact width-alignment audit:
 
-2. Add compact task-level smoke after the compact runner exists:
+```text
+check per-layer remaining FFN width modulo 64/128/256
+```
+
+If widths are mostly unaligned, P5 should move to block-aligned plans before
+serious latency claims.
+
+3. Run MLP-only microbenchmark:
+
+```text
+dense MLP vs compact 10% MLP vs compact 20% MLP
+input shapes [1,1,H], [1,128,H], [4,128,H]
+```
+
+If MLP-only is not faster, the issue is shape/kernel efficiency. If MLP-only is
+faster but full-model generation is slower, the issue is wrapper/generation/
+benchmark overhead.
+
+4. Add compact task-level smoke after latency diagnostics:
 
 ```text
 compact_10 Real Tool smoke
 compact_20 Real Tool smoke as pressure test
 ```
 
-3. Only after that, implement dynamic Adaptive-B20 episode latency:
+5. Only after that, implement dynamic Adaptive-B20 episode latency:
 
 ```text
 tool-call/retry -> compact_10

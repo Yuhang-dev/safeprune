@@ -345,3 +345,107 @@ python -u scripts/benchmark_compact_subnet_latency.py \
 Report these latency numbers only as single-subnet speed potential. They are
 not Adaptive-B20 episode latency because dynamic switching overhead is not yet
 measured.
+
+## P5 Latency Smoke Result And Diagnostics
+
+Initial batch-1 latency smoke did not show speedup:
+
+| Model | Active MLP | Prefill ms | Decode ms/token | Tok/s | Peak GB |
+|---|---:|---:|---:|---:|---:|
+| dense | 1.0000 | 28.803 | 4.304 | 232.316 | 8.266 |
+| nested_0p10 compact | 0.9000 | 41.532 | 6.403 | 156.184 | 14.093 |
+| nested_0p20 compact | 0.8000 | 40.268 | 15.401 | 64.933 | 13.920 |
+
+This is a negative P5 engineering result, not a speedup result. It means the
+current runtime compact path is structurally valid but not performance-ready.
+Do not run dynamic Adaptive-B20 latency until the single-subnet path is
+understood.
+
+### One-Variant-Per-Process Latency Checks
+
+Dense only:
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant dense \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_dense_only_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_dense_only_b1.md
+```
+
+Compact 10 only:
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_0p10_only_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_0p10_only_b1.md
+```
+
+Compact 20 only:
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_0p20_only_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_0p20_only_b1.md
+```
+
+### Width Alignment Audit
+
+```bash
+python -u scripts/analyze_compact_width_alignment.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/width_alignment.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/width_alignment.md
+```
+
+### MLP-Only Microbenchmark
+
+```bash
+python -u scripts/benchmark_compact_mlp_micro.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --layers 0,14,27 \
+  --shapes 1x1,1x128,4x128 \
+  --warmup-iters 10 \
+  --measure-iters 50 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/mlp_micro.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/mlp_micro.md
+```
