@@ -701,3 +701,23 @@ python -u scripts/benchmark_compact_subnet_latency.py \
   --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b4.json \
   --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_fixed_decode_b4.md
 ```
+
+Observed fixed-decode batch-4 full-model latency:
+
+| Plan | Decode ms/token | Tok/s | Peak GB | Speedup vs dense |
+|---|---:|---:|---:|---:|
+| dense | 27.319 | 146.421 | 8.335 | 0.0% |
+| aligned_0p10 | 27.200 | 147.059 | 8.062 | +0.4% |
+| aligned_0p20 | 27.700 | 144.405 | 7.926 | -1.4% |
+
+Decision:
+
+```text
+Do not run dynamic Adaptive-B20 latency yet.
+Do not claim full-model wall-clock speedup.
+
+P5 has shown MLP-only speedups and slightly lower memory, but full-model
+fixed-decode latency remains essentially flat or negative. Future speed work
+should move toward block/group-aligned plans with better kernel utilization,
+custom/fused FFN kernels, or runtime changes that avoid HF/PyTorch overhead.
+```

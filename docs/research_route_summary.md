@@ -222,7 +222,28 @@ Fixed-decode batch-1 full-model latency:
 | aligned_0p20 | 26.680 | 37.481 | 7.857 | Slightly slower than dense |
 
 This means MLP-only speedups are not yet full-model speedups at batch-1 decode.
-Next check batch 4 and longer prompts before compact task-level smoke.
+Batch-4 fixed-decode full-model latency:
+
+| Plan | Decode ms/token | Tok/s | Peak GB | Interpretation |
+|---|---:|---:|---:|---|
+| dense | 27.319 | 146.421 | 8.335 | Baseline |
+| aligned_0p10 | 27.200 | 147.059 | 8.062 | Noise-level speedup, about 0.4% |
+| aligned_0p20 | 27.700 | 144.405 | 7.926 | Slower than dense |
+
+P5 current status:
+
+```text
+MLP-only aligned compact speedup: positive
+full-model fixed-decode speedup: not demonstrated
+GPU memory: slightly lower for compact plans
+dynamic Agent latency: do not run yet
+```
+
+This should be frozen as a partial systems result: hardware alignment recovers
+MLP-level speed potential, but the current PyTorch/HF full-model decode path
+does not convert that into meaningful end-to-end latency. Further speedup work
+requires a lower-level kernel/runtime path, coarser block/group pruning, or a
+workload where FFN GEMMs dominate more strongly.
 
 4. Build or refine hardware-aligned compact plans:
 

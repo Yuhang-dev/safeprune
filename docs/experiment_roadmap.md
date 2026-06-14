@@ -424,7 +424,9 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 19. `[DONE]` 生成 7B subnet theory table：
 remaining FFN channels、parameters、FFN MACs、theoretical FLOPs。
 20. `[CONDITIONAL]` 若论文主表跨 3B/7B，补 3B protocol v1.2 1000 对齐。
-21. `[NEXT]` P5 compact FFN subnet materialization、equivalence check、latency benchmark。
+21. `[PARTIAL]` P5 compact FFN subnet materialization、equivalence check、latency benchmark：
+hardware-aligned compact FFN 在 MLP-only microbench 有速度信号，但 full-model
+fixed-decode latency 未形成实质收益；dynamic Agent latency 暂缓。
 22. `[BASELINE]` 复现 SliceGPT / Probe Pruning，不 vendoring 到本项目。
 
 P2c 已实现的入口：

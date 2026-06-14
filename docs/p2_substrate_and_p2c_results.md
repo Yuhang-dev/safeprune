@@ -616,15 +616,16 @@ This is a negative engineering result: it does not invalidate the active-FFN
 cost result, but it blocks any wall-clock speedup claim until the runtime path
 is optimized or replaced by a hardware-aligned implementation.
 
-Next script still needed:
-dynamic Agent episode latency runner
+Hardware-aligned compact plans recover clear MLP-only speedups, especially for
+the 20% subnet. However, fixed-decode full-model latency remains flat or
+negative: aligned_0p10 gives only about 0.4% speedup at batch 4, and
+aligned_0p20 is slower than dense. This freezes P5 as a partial systems result:
+MLP-level speed potential exists, but the current HF/PyTorch full-model decode
+path does not yet deliver meaningful wall-clock speedup.
 
-Next diagnostics: one-variant-per-process latency, actual new-token statistics,
-peak memory before/after load and materialization, MLP-only microbenchmark, and
-per-layer width-alignment report. If irregular widths explain the slowdown,
-build hardware-aligned compact plans before retrying full-model latency. Dynamic
-Agent latency must separately measure episode latency, P50/P95 latency, GPU
-memory, and subnet switch overhead.
+Dynamic Agent episode latency runner is therefore deferred until a lower-level
+kernel/runtime path, coarser block/group pruning, or more FFN-dominant workload
+shows full-model speedup.
 ```
 
 Only after this step can the project discuss real wall-clock speedup.

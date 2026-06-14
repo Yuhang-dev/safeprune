@@ -105,7 +105,17 @@ fixed-decode batch-1 已完成：
 | aligned_0p20 | 26.680 | 37.481 | 7.857 |
 
 当前只能说 aligned_0p10 有轻微 full-model decode speedup，aligned_0p20 没有；
-下一步测 batch=4 / longer prompt，不要直接进 dynamic latency。
+batch=4 也已完成：
+
+| Plan | Decode ms/token | Tok/s | Peak GB |
+|---|---:|---:|---:|
+| dense | 27.319 | 146.421 | 8.335 |
+| aligned_0p10 | 27.200 | 147.059 | 8.062 |
+| aligned_0p20 | 27.700 | 144.405 | 7.926 |
+
+P5 当前应冻结为 partial systems result：MLP-only speedup 成立，full-model
+fixed-decode speedup 未成立；不要直接进 dynamic latency。后续真实加速需要
+更低层 kernel/runtime、coarser block/group pruning，或更 FFN-dominant 的场景。
 
 7B static benchmark quick sanity 已完成：
 
