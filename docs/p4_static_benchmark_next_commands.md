@@ -205,12 +205,13 @@ PY
   universal static compression setting.
 - Before P5, continue to claim only theoretical active-FFN cost reduction.
 - P5 materialization and equivalence scripts exist for first-stage validation.
-  Latency and dynamic Agent switching scripts are still future work.
+  Single-subnet latency smoke also exists. Dynamic Agent switching scripts are
+  still future work.
 
 ## P5 First-Stage Compact Subnet Commands
 
-P5 first-stage scripts now cover runtime materialization and mask-hook-vs-compact
-equivalence. They do not implement dynamic Agent switching or latency benchmark
+P5 scripts now cover runtime materialization, mask-hook-vs-compact equivalence,
+and single-subnet latency smoke. They do not implement dynamic Agent switching
 yet.
 
 Set the 7B cache first:
@@ -286,3 +287,61 @@ generation_exact_match_rate is high or failures are manually inspected.
 Exact bitwise equality is not required because the compact path replaces
 modules and applies compensation through a wrapper, but large logit or schema
 behavior drift must be investigated before latency work.
+
+## P5 Logits-Only Equivalence Result
+
+The 100-prompt logits-only equivalence check has passed:
+
+| Plan | Prompts | Active actual | Logits max diff | Logits mean diff | Top-1 match |
+|---|---:|---:|---:|---:|---:|
+| nested_0p10 | 100 | 0.899998 | 0.7260 | 0.0906 | 1.0000 |
+| nested_0p20 | 100 | 0.799999 | 0.7500 | 0.1062 | 1.0000 |
+
+This is enough to proceed to single-subnet latency smoke. Continue to treat
+greedy exact match as a diagnostic, not the primary equivalence metric.
+
+## P5 Single-Subnet Latency Smoke
+
+Do not run this concurrently with any other GPU experiment.
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 2 \
+  --measure-iters 5 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_smoke_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_smoke_b1.md
+```
+
+If batch 1 is stable, optionally run batch 4:
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 4 \
+  --decode-new-tokens 32 \
+  --warmup-iters 2 \
+  --measure-iters 5 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p10.json \
+  --plan-name nested_0p10 \
+  --plan outputs/agent_qwen2_5_7b/substrate_v2_schema_nested/flap/budget_plan_0p20.json \
+  --plan-name nested_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_smoke_b4.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/latency/latency_smoke_b4.md
+```
+
+Report these latency numbers only as single-subnet speed potential. They are
+not Adaptive-B20 episode latency because dynamic switching overhead is not yet
+measured.

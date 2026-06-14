@@ -42,10 +42,21 @@ P5 第一阶段入口已实现：
 ```text
 scripts/materialize_compact_subnet.py
 scripts/evaluate_compact_subnet_equivalence.py
+scripts/benchmark_compact_subnet_latency.py
 ```
 
-它们只覆盖 runtime compact subnet materialization 和 mask-hook vs compact
-equivalence；latency benchmark 和 dynamic Agent switching 尚未实现。
+它们覆盖 runtime compact subnet materialization、mask-hook vs compact
+equivalence，以及单子网 latency smoke；dynamic Agent switching 尚未实现。
+
+P5 compact logits-only equivalence 100 prompts 已完成：
+
+| Plan | Active actual | Logits max diff | Logits mean diff | Top-1 match |
+|---|---:|---:|---:|---:|
+| nested_0p10 | 0.899998 | 0.7260 | 0.0906 | 1.0000 |
+| nested_0p20 | 0.799999 | 0.7500 | 0.1062 | 1.0000 |
+
+下一步先跑 single-subnet latency smoke，再做 compact Real Tool smoke；不要把
+单子网测速直接写成 Adaptive-B20 episode latency。
 
 7B static benchmark quick sanity 已完成：
 

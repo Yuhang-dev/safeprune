@@ -595,17 +595,26 @@ P5 compact subnet / real latency:
 First-stage materialization and equivalence scripts now exist:
 scripts/materialize_compact_subnet.py
 scripts/evaluate_compact_subnet_equivalence.py
+scripts/benchmark_compact_subnet_latency.py
 
 Materialize subnet_dense, subnet_10, and subnet_20.
 Physically slice gate_proj rows, up_proj rows, and down_proj columns.
 Check mask-hook vs compact equivalence before any latency claim.
 
-Next scripts still needed:
-benchmark_compact_subnet_latency.py
+Current compact equivalence status:
+
+10% and 20% compact subnets preserve the planned active ratio and reach 100%
+top-1 logits agreement with the corresponding mask-hook path on 100 prompts.
+Greedy exact generation is treated as a diagnostic because small bf16 numeric
+differences can drift later tokens.
+
+Next script still needed:
 dynamic Agent episode latency runner
 
-Measure tokens/s, decode latency/token, episode latency, P50/P95 latency,
-GPU memory, and subnet switch overhead.
+Single-subnet latency smoke should measure tokens/s, prefill latency,
+decode latency/token, and GPU memory. Dynamic Agent latency must separately
+measure episode latency, P50/P95 latency, GPU memory, and subnet switch
+overhead.
 ```
 
 Only after this step can the project discuss real wall-clock speedup.

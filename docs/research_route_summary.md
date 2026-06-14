@@ -47,7 +47,7 @@ until compact subnet latency is measured.
 | P2c Generation-Type Routing | Can different generation types use different budgets? | 3B Adaptive-B20 matches dense at 997/1000 and reduces cost_per_success by about 13.6% | Tool-call and final-answer generations have different FFN budget tolerance. |
 | P4 7B Extension | Does the result scale to Qwen2.5-7B? | 7B Adaptive-B20 reaches 1000/1000 under strict protocol v1.2, cost_per_success 2.2390 -> 1.9000, about 15.1% lower | The strongest current result: dense-equivalent task success with lower active FFN cost. |
 | P4 Static Benchmark | Is 20% safe as a static general model? | 7B nested_0p20 PPL rises from 11.7030 to 33.8450; MC accuracy drops | 20% is not a universal static compression setting; it should be used only as a dynamic final-answer budget. |
-| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | First-stage materialization implemented; 10%/20% compact preserve active ratio and 100% top-1 logits on 32 prompts; greedy exact drifts | Structure is correct so far; larger logits-only and task-level compact validation are needed before latency claims. |
+| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | First-stage materialization implemented; 10%/20% compact preserve active ratio and 100% top-1 logits on 100 prompts; greedy exact drifts | Structure/logits equivalence is correct so far; single-subnet latency and task-level compact validation are next. |
 
 ## 3. Current Best Result
 
@@ -102,15 +102,18 @@ Implemented first-stage P5 tooling:
 src/safeprune/compact.py
 scripts/materialize_compact_subnet.py
 scripts/evaluate_compact_subnet_equivalence.py
+scripts/benchmark_compact_subnet_latency.py
 tests/test_compact.py
 ```
 
-Current 7B compact equivalence on 32 prompts:
+Current 7B compact equivalence:
 
-| Plan | Active actual | Top-1 logits match | Greedy exact match |
-|---|---:|---:|---:|
-| compact nested_0p10 | 0.899998 | 32/32 | 26/32 |
-| compact nested_0p20 | 0.799999 | 32/32 | 23/32 |
+| Plan | Prompts | Active actual | Logits max diff | Logits mean diff | Top-1 logits match | Greedy exact match |
+|---|---:|---:|---:|---:|---:|---:|
+| compact nested_0p10 | 32 | 0.899998 | 0.5938 | 0.0851 | 32/32 | 26/32 |
+| compact nested_0p20 | 32 | 0.799999 | 0.7500 | 0.1066 | 32/32 | 23/32 |
+| compact nested_0p10 | 100 | 0.899998 | 0.7260 | 0.0906 | 100/100 | skipped |
+| compact nested_0p20 | 100 | 0.799999 | 0.7500 | 0.1062 | 100/100 | skipped |
 
 Interpretation:
 
@@ -128,23 +131,7 @@ planned active ratio and last-token top-1 logits so far.
 
 ## 6. Immediate Next Steps
 
-1. Run logits-only compact equivalence on 100 prompts:
-
-```text
-compact_10 logits-only 100
-compact_20 logits-only 100
-```
-
-Passing criteria:
-
-```text
-active_mlp_ratio_actual matches plan
-top1_match_rate >= 0.99
-mean logit diff close to the 32-prompt result
-20% may be worse than 10%, but must not produce widespread top-1 mismatch
-```
-
-2. Implement and run single-subnet latency smoke:
+1. Run single-subnet latency smoke:
 
 ```text
 dense
@@ -160,14 +147,14 @@ single-subnet latency / speed potential
 
 Do not report Adaptive-B20 latency from single-subnet measurements.
 
-3. Add compact task-level smoke after the compact runner exists:
+2. Add compact task-level smoke after the compact runner exists:
 
 ```text
 compact_10 Real Tool smoke
 compact_20 Real Tool smoke as pressure test
 ```
 
-4. Only after that, implement dynamic Adaptive-B20 episode latency:
+3. Only after that, implement dynamic Adaptive-B20 episode latency:
 
 ```text
 tool-call/retry -> compact_10
@@ -198,4 +185,3 @@ loop and reduces theoretical active-FFN cost_per_success by about 15.1%.
 Static benchmarks show why this must be dynamic: 20% is not generally safe as a
 static model, but can be reserved for final-answer generations.
 ```
-
