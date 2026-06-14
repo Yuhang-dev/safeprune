@@ -525,11 +525,64 @@ Observed aligned MLP-only result:
 
 | Plan | B1 S1 | B1 S128 | B4 S128 |
 |---|---:|---:|---:|
-| dense | 0.220 ms | 0.495 ms | 0.883 ms |
-| aligned_0p10 | 0.477 ms | 0.585 ms | 1.401 ms |
-| aligned_0p20 | 0.443 ms | 0.527 ms | 1.250 ms |
+| dense | 0.217 ms | 0.494 ms | 0.874 ms |
+| aligned_0p10 | 0.240 ms | 0.504 ms | 0.770 ms |
+| aligned_0p20 | 0.185 ms | 0.220 ms | 0.466 ms |
 
-This improves over irregular compact but still does not beat dense. The
-materializer now skips layers that have no pruned channels, no compensation, and
-scale 1.0, avoiding wrapper overhead on dense-width layers. Re-run the aligned
-MLP-only benchmark after pulling the commit before trying full-model latency.
+After skipping no-op wrappers, aligned_0p20 is faster than dense in the sampled
+MLP-only shapes. aligned_0p10 is near dense at batch 1 and faster at B4 S128.
+The next step is aligned full-model single-subnet latency plus aligned compact
+equivalence.
+
+### Aligned Compact Equivalence
+
+```bash
+python -u scripts/evaluate_compact_subnet_equivalence.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
+  --plan-name aligned_0p20 \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 100 \
+  --skip-generation \
+  --local-files-only \
+  --output outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/equivalence_logits_100_aligned_0p20.json
+```
+
+### Aligned Full-Model Latency
+
+Run dense and aligned_0p20 in separate processes:
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant dense \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_only_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_dense_only_b1.md
+```
+
+```bash
+python -u scripts/benchmark_compact_subnet_latency.py \
+  --config configs/agent_qwen2_5_7b.yaml \
+  --variant compact \
+  --prompts-jsonl data/agent/real_tool_tasks_v1_7b_smoke_100.jsonl \
+  --max-prompts 16 \
+  --batch-sizes 1 \
+  --decode-new-tokens 32 \
+  --warmup-iters 5 \
+  --measure-iters 10 \
+  --local-files-only \
+  --plan outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/budget_plan_aligned_0p20.json \
+  --plan-name aligned_0p20 \
+  --output-json outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_only_b1.json \
+  --output-md outputs/agent_qwen2_5_7b/compact_subnets/hardware_aligned/latency_aligned_0p20_only_b1.md
+```
+
+If aligned_0p20 full-model latency is faster and equivalence holds, run compact
+Real Tool smoke next. Do not run dynamic Adaptive-B20 latency before that.

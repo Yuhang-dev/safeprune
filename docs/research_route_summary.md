@@ -192,14 +192,14 @@ Hardware-aligned MLP-only microbenchmark status:
 
 | Plan | B1 S1 | B1 S128 | B4 S128 | Interpretation |
 |---|---:|---:|---:|---|
-| dense | 0.220 ms | 0.495 ms | 0.883 ms | Baseline |
-| aligned_0p10 | 0.477 ms | 0.585 ms | 1.401 ms | Improved vs irregular compact, still slower than dense |
-| aligned_0p20 | 0.443 ms | 0.527 ms | 1.250 ms | Improved vs irregular compact, still slower than dense |
+| dense | 0.217 ms | 0.494 ms | 0.874 ms | Baseline |
+| aligned_0p10 | 0.240 ms | 0.504 ms | 0.770 ms | Near dense for batch 1, faster for B4 S128 |
+| aligned_0p20 | 0.185 ms | 0.220 ms | 0.466 ms | Faster than dense across sampled shapes |
 
-Alignment helped, especially for 20%, but it did not pass the MLP-only latency
-gate. The next implementation fix is to avoid wrapping layers that have no
-pruned channels, no compensation, and scale 1.0; those dense-width layers should
-stay on the original Qwen MLP path.
+After skipping no-op wrappers on dense-width layers, aligned_0p20 passes the
+MLP-only latency gate. It is now reasonable to retry full-model single-subnet
+latency for aligned_0p20 and to run aligned compact equivalence before any task
+or dynamic latency claim.
 
 4. Build or refine hardware-aligned compact plans:
 
@@ -211,7 +211,9 @@ nested pruned sets preserved
 ```
 
 Use these plans only for P5 latency engineering. They do not replace the frozen
-P4 Real Tool active-cost result.
+P4 Real Tool active-cost result. Before task or dynamic latency claims, validate
+aligned mask-hook vs compact equivalence and then single-subnet full-model
+latency.
 
 5. Add compact task-level smoke after aligned latency diagnostics:
 
