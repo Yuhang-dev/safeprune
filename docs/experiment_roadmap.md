@@ -6,6 +6,8 @@
 Trajectory-Event-Aware FFN Compute Allocation for Tool-Using Reasoning Agents
 ```
 
+高层研究路线总览见 `docs/research_route_summary.md`。本文保留更细的实验历史和命令上下文。
+
 核心问题：
 
 > Agent failure / reflect 事件、工具 observation、阶段和 hidden state，是否能定位高价值 FFN 计算步骤，并比固定 mask 或 hidden-state-only 路由更有效地分配恢复计算？

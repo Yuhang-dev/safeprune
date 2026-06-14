@@ -5,6 +5,7 @@
 本文是当前新对话交接入口。优先读本文，再按需读：
 
 ```text
+docs/research_route_summary.md
 docs/p2_substrate_and_p2c_results.md
 docs/p4_static_benchmark_next_commands.md
 docs/real_tool_v1_results.md
