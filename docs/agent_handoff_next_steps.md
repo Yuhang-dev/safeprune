@@ -6,6 +6,7 @@
 
 ```text
 docs/research_route_summary.md
+docs/paper_evidence_and_outline.md
 docs/p2_substrate_and_p2c_results.md
 docs/p4_static_benchmark_next_commands.md
 docs/real_tool_v1_results.md

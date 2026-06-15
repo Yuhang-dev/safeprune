@@ -5,6 +5,7 @@ so far. Detailed commands and full tables live in:
 
 ```text
 docs/experiment_roadmap.md
+docs/paper_evidence_and_outline.md
 docs/p2_substrate_and_p2c_results.md
 docs/p4_static_benchmark_next_commands.md
 docs/agent_handoff_next_steps.md
@@ -33,8 +34,9 @@ The main metric is:
 cost_per_success = total active FFN cost / successful tasks
 ```
 
-This remains an active-FFN-cost metric. It is not a wall-clock speedup claim
-until compact subnet latency is measured.
+This remains an active-FFN-cost metric. P5 compact measurements did not show a
+meaningful full-model decode speedup, so the main result must not be described
+as a wall-clock speedup.
 
 ## 2. Evidence Chain
 
@@ -47,7 +49,7 @@ until compact subnet latency is measured.
 | P2c Generation-Type Routing | Can different generation types use different budgets? | 3B Adaptive-B20 matches dense at 997/1000 and reduces cost_per_success by about 13.6% | Tool-call and final-answer generations have different FFN budget tolerance. |
 | P4 7B Extension | Does the result scale to Qwen2.5-7B? | 7B Adaptive-B20 reaches 1000/1000 under strict protocol v1.2, cost_per_success 2.2390 -> 1.9000, about 15.1% lower | The strongest current result: dense-equivalent task success with lower active FFN cost. |
 | P4 Static Benchmark | Is 20% safe as a static general model? | 7B nested_0p20 PPL rises from 11.7030 to 33.8450; MC accuracy drops | 20% is not a universal static compression setting; it should be used only as a dynamic final-answer budget. |
-| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | First-stage materialization implemented; 10%/20% compact preserve active ratio and 100% top-1 logits on 100 prompts; naive latency smoke is slower than dense | Structure/logits equivalence is correct, but the current runtime path is not performance-ready; isolate memory, wrapper, and shape-alignment artifacts before any speedup claim. |
+| P5 Compact Subnet | Can mask-hook cost become a physical subnet? | Aligned 10%/20% compact preserve top-1 logits; aligned MLP-only speedups appear, but full-model fixed-decode is flat or negative | Hardware alignment is necessary but insufficient for end-to-end speedup under the current HF/PyTorch runtime. P5 is deployment analysis, not a main speedup result. |
 
 ## 3. Current Best Result
 

@@ -29,11 +29,14 @@ The default project route is:
    status page:
    hidden-state-only is a reviewer baseline, 10% substrate is the current
    frozen P2 result, and schema-aware adaptive routing is the current P2c path.
-5. Treat P2c as the current main result: `adaptive_B20` matches dense success
-   at 997/1000 while reducing cost per success by about 13.6%.
-6. Next, run standard WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity, then
-   7B smoke and compact-subnet latency work.
-7. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
+5. Treat Qwen2.5-7B P4 as the strongest current result: `adaptive_B20` reaches
+   1000/1000 under Real Tool protocol v1.2 while reducing theoretical active
+   FFN cost per success by about 15.1%.
+6. Treat P5 as deployment analysis: compact equivalence and MLP-only speed
+   signals pass, but meaningful full-model wall-clock speedup is not yet shown.
+7. Use `docs/paper_evidence_and_outline.md` as the paper evidence matrix,
+   ablation plan, claim boundary, and writing outline.
+8. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
    current Agent Prune v1 loop.
 
 The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The

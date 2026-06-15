@@ -7,6 +7,7 @@ Trajectory-Event-Aware FFN Compute Allocation for Tool-Using Reasoning Agents
 ```
 
 高层研究路线总览见 `docs/research_route_summary.md`。本文保留更细的实验历史和命令上下文。
+论文证据矩阵、ablation 和写作目录见 `docs/paper_evidence_and_outline.md`。
 
 核心问题：
 
@@ -41,7 +42,7 @@ cost per successful task = total active FFN cost / successful tasks
 | 7B static benchmark quick sanity | `[DONE]` | dense / nested 10% / nested 20% 的 256-sample WikiText-2、PIQA、HellaSwag、ARC-Easy 已完成；20% 静态通用能力退化明显，只能作为动态 final-answer budget。 |
 | 7B full static benchmark | `[OPTIONAL]` | 若需要论文最终通用能力表，再把 256 samples 扩到 1024 或 full validation。 |
 | 3B protocol v1.2 alignment | `[CONDITIONAL]` | 若最终论文主表同时展示 3B 与 7B，则补 3B protocol v1.2 1000；否则必须清楚标注不同 protocol version。 |
-| compact FFN / kernel | `[NEXT]` | 第一版只做 mask-based 算法验证；下一步物化 FFN-only compact subnet 才能测真实加速。 |
+| compact FFN / kernel | `[PARTIAL/FROZEN]` | compact 等价性和 MLP-only speed signal 已通过，但 full-model fixed-decode 无实质加速；作为 deployment analysis，不阻塞论文主线。 |
 
 ## 1. 为什么转向 Agent 动态 FFN
 
