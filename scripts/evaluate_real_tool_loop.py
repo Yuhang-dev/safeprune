@@ -50,6 +50,7 @@ REAL_TOOL_METHODS = [
     "adaptive_A",
     "adaptive_B15",
     "adaptive_B20",
+    "uniform20_reflect_dense",
 ]
 SUBSTRATE_ONLY_METHODS = {
     "dense",
@@ -58,6 +59,7 @@ SUBSTRATE_ONLY_METHODS = {
     "adaptive_A",
     "adaptive_B15",
     "adaptive_B20",
+    "uniform20_reflect_dense",
 }
 DEFAULT_REAL_TOOL_METHODS = [
     "dense",
@@ -693,6 +695,11 @@ def _register_generation_type_specs(
         specs["adaptive_B20"] = {
             **common,
             "generation_policy": GenerationRoutingPolicy("0p10", "0p20", "dense"),
+        }
+    if {"0p20"}.issubset(by_budget):
+        specs["uniform20_reflect_dense"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p20", "0p20", "dense"),
         }
 
 

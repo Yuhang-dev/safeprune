@@ -1,10 +1,11 @@
 # Agent FFN Pruning Handoff
 
-日期：2026-06-13
+更新日期：2026-06-15
 
 本文是当前新对话交接入口。优先读本文，再按需读：
 
 ```text
+docs/paper_experiment_record.md
 docs/research_route_summary.md
 docs/paper_evidence_and_outline.md
 docs/p2_substrate_and_p2c_results.md
@@ -27,18 +28,34 @@ P1 hidden-state centroid baseline 1000
 P2 FLAP 10% substrate 1000
 P2c schema-aware nested adaptive routing 1000
 P4 Qwen2.5-7B Real Tool protocol v1.2 1000
+3B post-fix Real Tool protocol v1.2 alignment 1000
 ```
 
 当前下一步：
 
 ```text
-3B protocol v1.2 alignment 1000 if the final paper table compares 3B and 7B
-P5 compact FFN subnet / kernel for real wall-clock speedup
+inspect the 14 Adaptive-B20 lookup failures in the 3B v1.2 run
+assemble final paper main/ablation tables
+write Method and Experiments from the canonical experiment ledger
+optionally expand static benchmarks to 1024/full validation
 ```
 
 当前命令入口见 `docs/p4_static_benchmark_next_commands.md`。
 
-P5 第一阶段入口已实现：
+当前统一口径：
+
+```text
+P4 7B Real Tool v1.2 is the main result.
+P5 is frozen as deployment analysis.
+Do not continue dynamic compact latency under the current HF/PyTorch wrapper.
+Do not claim wall-clock speedup.
+```
+
+完整的方法、动机、数据、负结果、协议修复与论文角色见
+`docs/paper_experiment_record.md`。以下较长的 P5 内容保留为实验时间线和诊断记录，
+不再代表当前 next step。
+
+P5 已实现的入口：
 
 ```text
 scripts/materialize_compact_subnet.py
@@ -172,7 +189,7 @@ adaptive_B20
 不要只跑 `adaptive_B20`，否则无法证明 generation-type routing 相比统一 10%
 nested budget 的增益。
 
-P2c 1000 已完成：
+P2c historical pre-fix 1000：
 
 | Method | Success | Failure | Non-failure | Cost / success | Schema validity |
 |---|---:|---:|---:|---:|---:|
@@ -184,10 +201,24 @@ P2c 1000 已完成：
 解释：
 
 ```text
-adaptive_B20 与 dense 成功率完全一致：997/1000。
-相对 dense，cost_per_success 下降约 13.6%。
-相对 nested_uniform_10，cost_per_success 进一步下降约 5.0%。
-schema_validity_rate、premature_final_rate、generation_collapse_rate 均正常。
+This table is historical and must not be used as the final cross-model table.
+```
+
+Post-fix protocol v1.2 1000：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| dense | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| identity_hook | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| nested_uniform_10 | 957/1000 | 175/200 | 782/800 | 2.2371 | 0.9557 |
+| adaptive_B20 | 986/1000 | 200/200 | 786/800 | 1.9270 | 1.0000 |
+
+解释：
+
+```text
+Adaptive-B20 不是 Dense-equivalent，但 failure subset 达到 200/200。
+总成功率比 dense 低 7 条，cost_per_success 低约 13.85%。
+14 条失败集中在 non-failure lookup，下一步只需抽 trace 归因。
 ```
 
 Real Tool v1 的正式结果在：

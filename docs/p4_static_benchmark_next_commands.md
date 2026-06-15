@@ -3,6 +3,9 @@
 This document is the current command sheet after freezing the Qwen2.5-7B
 Real Tool protocol v1.2 result.
 
+For the complete paper-facing method/result history and claim boundaries, read
+`docs/paper_experiment_record.md` first.
+
 ## Status
 
 Do not rerun the same 7B Real Tool 1000 matrix. The frozen protocol v1.2
@@ -24,6 +27,13 @@ about 15.1% versus dense. This is not a wall-clock speedup claim.
 cd /root/autodl-tmp/safeprune/code/Prune
 source /root/autodl-tmp/safeprune/.venv_agent/bin/activate
 git pull origin main
+
+export PYTHONPATH=$PWD:$PWD/src
+export HF_HOME=/root/autodl-tmp/safeprune/hf_cache
+export HF_HUB_CACHE=$HF_HOME/hub
+export HF_DATASETS_CACHE=$HF_HOME/datasets
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 ```
 
 ## 2. Check 7B Nested Plans
@@ -141,9 +151,20 @@ final-answer budget inside the Real Tool loop, not as a universal static model.
 
 ## 6. 3B Protocol v1.2 Alignment
 
-Run this if the final paper table compares Qwen2.5-3B and Qwen2.5-7B directly.
-Otherwise the 3B protocol v1 and 7B protocol v1.2 numbers must be clearly
-marked as separate protocol versions.
+Status on 2026-06-15: completed. The command below is retained for
+reproducibility and should not be rerun without a specific reason.
+
+Result:
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| Dense | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| Identity hook | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| Nested uniform 10 | 957/1000 | 175/200 | 782/800 | 2.2371 | 0.9557 |
+| Adaptive B20 | 986/1000 | 200/200 | 786/800 | 1.9270 | 1.0000 |
+
+Next action: inspect the 14 Adaptive-B20 lookup failures; do not repeat the
+full 1000-task matrix.
 
 ```bash
 python -u scripts/evaluate_real_tool_loop.py \

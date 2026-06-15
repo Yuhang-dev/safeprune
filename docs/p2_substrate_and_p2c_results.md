@@ -8,6 +8,9 @@
 failure / reflect trajectory events can localize high-value recovery compute.
 ```
 
+用于论文写作的跨阶段完整实验总账见 `docs/paper_experiment_record.md`。本文保留
+P1/P2/P2c 的详细阶段记录和复现实验信息。
+
 P2/P2c 的目标不是继续手工调 1% mask，而是把底层 FFN 结构化剪枝率推到有论文意义的预算，并验证更激进预算能否按 generation type 安全分配。
 
 ## 1. 当前结论
@@ -19,7 +22,7 @@ P2/P2c 的目标不是继续手工调 1% mask，而是把底层 FFN 结构化剪
 | Real Tool v1 | 1% trajectory-event-aware routing | failure recovery 是局部 reflect-step 计算瓶颈。 |
 | P1 hidden-state baseline | centroid router 1000 | hidden-state-only 不如显式 event；event hybrid 追平但 router-inclusive cost 高。 |
 | P2 10% substrate | FLAP substrate 1000 | 10% FFN pruning + reflect dense 稳定但非无损，cost/success 下降约 5.8%。 |
-| P2c adaptive routing | schema-aware nested 1000 | tool-call 10%、answer 20%、reflect dense 达到 dense 同等 997/1000，cost/success 下降到 1.9057。 |
+| P2c adaptive routing | post-fix protocol v1.2 1000 | Adaptive-B20 986/1000 vs dense 993/1000；failure 200/200；cost/success 下降到 1.9270。 |
 
 论文表述应保持克制：
 
@@ -335,6 +338,53 @@ Required post-fix sanity rerun:
 7B: dense / identity_hook first, then the 20-task minismoke matrix.
 ```
 
+### Post-fix 3B protocol v1.2 alignment result
+
+The required 3B rerun has now completed under protocol v1.2:
+
+Prefix:
+
+```text
+outputs/agent_qwen2_5_3b_4090_low/real_tool_eval/real_tool_v1_p2c_adaptive_1000_protocol_v1_2
+```
+
+| Method | Success | Failure | Non-failure | Cost / success | Active FFN cost | Fallback step | Schema validity |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 993/1000 | 193/200 | 800/800 | 2.2367 | 2221.0000 | 0.0000 | 0.9937 |
+| Identity hook | 993/1000 | 193/200 | 800/800 | 2.2367 | 2221.0000 | 0.0000 | 0.9937 |
+| Nested uniform 10 | 957/1000 | 175/200 | 782/800 | 2.2371 | 2140.8990 | 0.1219 | 0.9557 |
+| Adaptive B20 | 986/1000 | 200/200 | 786/800 | 1.9270 | 1899.9985 | 0.0909 | 1.0000 |
+
+By tool:
+
+| Method | Calculator | Lookup | Unit convert |
+|---|---:|---:|---:|
+| Dense | 327/334 | 333/333 | 333/333 |
+| Identity hook | 327/334 | 333/333 | 333/333 |
+| Nested uniform 10 | 291/334 | 333/333 | 333/333 |
+| Adaptive B20 | 334/334 | 319/333 | 333/333 |
+
+Interpretation:
+
+```text
+The identity no-op fix is validated: dense and identity_hook match exactly.
+
+Nested uniform 10 is not a useful final 3B baseline under v1.2. Its active FFN
+cost is lower, but 104 format-error events and lower task success make its
+cost_per_success slightly worse than dense.
+
+Adaptive-B20 is not lossless on 3B: 986/1000 versus dense 993/1000.
+It improves the injected-failure subset from 193/200 to 200/200, but loses
+14 non-failure lookup tasks. The aggregate result does not identify the exact
+lookup output error; inspect the failure traces before assigning a cause.
+
+Adaptive-B20 still reduces cost_per_success by about 13.85% versus dense and
+active_ffn_cost by about 14.45%, with schema_validity 1.0.
+```
+
+The historical 997/1000 P2c table remains useful for experiment history, but
+the post-fix protocol v1.2 table is the correct one for cross-model reporting.
+
 ### Real Tool protocol v1.1 hardening
 
 The post-fix 7B dense/identity gate showed `dense == identity_hook`, but dense
@@ -553,8 +603,8 @@ Do not rerun the same 7B protocol v1.2 Real Tool 1000 matrix. The 7B static
 quick sanity and subnet theory commands have completed.
 
 ```text
-1. Run 3B protocol v1.2 1000 only if the final paper table compares 3B and 7B.
-2. Otherwise proceed to P5 compact subnet materialization and latency.
+1. Inspect the 14 Adaptive-B20 lookup failure traces from the 3B v1.2 run.
+2. Use the post-fix 3B v1.2 result for any cross-model table.
 3. Expand 7B static benchmark beyond 256 samples only if a final general
    benchmark table is needed.
 ```

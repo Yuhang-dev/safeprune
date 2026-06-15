@@ -11,6 +11,9 @@
 
 当前结论用于技术路线决策，不作为最终论文结果。
 
+本文是早期 FFN mask 诊断记录。后续 Real Tool、P1-P5、7B 和论文 claim 的统一
+总账见 `docs/paper_experiment_record.md`。本文中的“下一步”应按历史语境理解。
+
 ## 1. 实验目的
 
 本项目当前方向是：

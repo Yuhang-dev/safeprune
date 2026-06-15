@@ -2,6 +2,10 @@
 
 日期：2026-06-13
 
+> 历史说明：本文保留项目从旧 SafePrune-DPO 转向 Agent FFN pruning 的过程记录。
+> 当前论文方法、全部正式结果、负结果和 claim 边界以
+> `docs/paper_experiment_record.md` 为准。
+
 本文结合两份输入材料整理当前项目路径：
 
 - `C:/Users/Yuhang/Downloads/大模型动态剪枝_技术路线报告.docx`

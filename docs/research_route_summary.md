@@ -4,6 +4,7 @@ This document summarizes the current research route and the evidence gathered
 so far. Detailed commands and full tables live in:
 
 ```text
+docs/paper_experiment_record.md
 docs/experiment_roadmap.md
 docs/paper_evidence_and_outline.md
 docs/p2_substrate_and_p2c_results.md
@@ -46,7 +47,7 @@ as a wall-clock speedup.
 | Real Tool v1 | Does the mechanism survive real tool execution? | Dense 997/1000; observe-failure-redense 997/1000; stage-reflect-dense 996/1000 with about half the fallback steps of fixed-window redense | Failure recovery is a localized compute bottleneck; reflect-localized dense fallback is more targeted than fixed-window fallback. |
 | P1 Hidden-State Baseline | Can hidden-state-only routing replace explicit event routing? | hidden-only underperforms; event hybrid catches up but router-inclusive cost is much higher | Explicit Agent trajectory events are cheaper and more reliable than hidden-state-only centroid routing for this benchmark. |
 | P2 Substrate v2 | Can the substrate move beyond 1% pruning? | 10% FLAP substrate reaches 990/1000 on 3B Real Tool 1000, cost_per_success down about 5.8% | The mechanism works at a meaningful 10% FFN budget, but not losslessly. |
-| P2c Generation-Type Routing | Can different generation types use different budgets? | 3B Adaptive-B20 matches dense at 997/1000 and reduces cost_per_success by about 13.6% | Tool-call and final-answer generations have different FFN budget tolerance. |
+| P2c Generation-Type Routing | Can different generation types use different budgets? | Post-fix 3B v1.2 Adaptive-B20 reaches 986/1000 vs dense 993/1000, failure 200/200, and lowers cost_per_success about 13.85% | Tool-call and final-answer generations have different FFN budget tolerance, but the 3B trade-off is not lossless. |
 | P4 7B Extension | Does the result scale to Qwen2.5-7B? | 7B Adaptive-B20 reaches 1000/1000 under strict protocol v1.2, cost_per_success 2.2390 -> 1.9000, about 15.1% lower | The strongest current result: dense-equivalent task success with lower active FFN cost. |
 | P4 Static Benchmark | Is 20% safe as a static general model? | 7B nested_0p20 PPL rises from 11.7030 to 33.8450; MC accuracy drops | 20% is not a universal static compression setting; it should be used only as a dynamic final-answer budget. |
 | P5 Compact Subnet | Can mask-hook cost become a physical subnet? | Aligned 10%/20% compact preserve top-1 logits; aligned MLP-only speedups appear, but full-model fixed-decode is flat or negative | Hardware alignment is necessary but insufficient for end-to-end speedup under the current HF/PyTorch runtime. P5 is deployment analysis, not a main speedup result. |
@@ -134,7 +135,33 @@ Greedy exact match is brittle because small bf16 numerical differences can
 change later tokens. The stronger signal is that compact subnets preserve the
 planned active ratio and last-token top-1 logits so far.
 
-## 6. Immediate Next Steps
+## 6. Current Next Steps
+
+P5 diagnostics are complete enough for the current paper:
+
+```text
+compact materialization and top-1 equivalence: pass
+hardware-aligned MLP-only speed signal: pass
+meaningful full-model fixed-decode speedup: not demonstrated
+dynamic Agent latency: deferred
+```
+
+Current priorities:
+
+1. Inspect the 14 non-failure lookup errors from the post-fix 3B protocol v1.2
+   Adaptive-B20 run.
+2. Build the final 7B main table, cross-model table, 3B failure-localization table, router ablation,
+   static sanity table, and P5 deployment table.
+3. Draft Method and Experiments using `docs/paper_experiment_record.md`.
+4. Optionally expand static benchmarks from 256 samples to 1024 or full
+   validation.
+5. Resume compact runtime engineering only with a lower-level kernel/runtime or
+   more hardware-friendly pruning granularity.
+
+## 6A. Historical P5 Diagnostic Record
+
+The following sequence records how P5 was diagnosed. It is not the current
+execution plan.
 
 Naive batch-1 single-subnet latency smoke:
 

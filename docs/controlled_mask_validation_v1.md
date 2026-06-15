@@ -5,6 +5,10 @@ Date: 2026-06-11
 This document freezes the controlled 1000-task mask validation run before
 moving to the real tool-execution Agent Prune loop.
 
+This is a historical mechanism-validation record. The complete paper-facing
+experiment ledger, including later Real Tool, P1-P5, 7B, static benchmark, and
+deployment results, is `docs/paper_experiment_record.md`.
+
 The run is still mask-hook algorithm validation. It does not claim wall-clock
 speedup because the masked FFN channels are multiplied by zero inside the full
 GEMM.
@@ -149,9 +153,8 @@ final answer plus tool validity and recovery behavior.
 Current real-tool stage:
 
 ```text
-implementation: done locally
-local structural tests: targeted tests pass
-remote smoke: in progress
-known issue fixed locally: evaluate_real_tool_loop.py now inserts repo root into sys.path;
-remote can also use export PYTHONPATH=$PWD:$PWD/src
+implementation: complete
+Real Tool v1 / P1 / P2 / P2c: complete
+Qwen2.5-7B protocol v1.2 1000: complete
+P5 compact deployment analysis: partial and frozen
 ```

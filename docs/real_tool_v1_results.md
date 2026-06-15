@@ -15,6 +15,9 @@ user request
 
 本轮结果足够作为 **Real Tool-Execution Agent Prune v1**。不需要继续补同配置 1000 条实验。
 
+本文是 Real Tool v1 的冻结细节记录。跨阶段论文实验总账见
+`docs/paper_experiment_record.md`。
+
 ## 1. 结论摘要
 
 当前最强结论不是：
@@ -234,8 +237,10 @@ Real Tool v1 到此冻结，不继续补同配置 1000 条。后续 P1/P2 结果
 1. `[DONE]` P1 hidden-state centroid baseline：hidden-state-only 不如显式 event；event hybrid 追平但 router-inclusive cost 高。
 2. `[DONE]` P2 FLAP 10% substrate：990/1000，cost_per_success 比 dense 降约 5.8%，但不是无损。
 3. `[DONE]` P2c schema-aware nested adaptive routing：1000 已完成，`adaptive_B20` 追平 dense 997/1000，cost_per_success 降到 1.9057。
-4. `[NEXT]` 标准 WikiText-2 / PIQA / HellaSwag / ARC-Easy sanity。
-5. `[P3]` compact subnet 或 kernel 实现后，才能报告真实 latency / throughput。
+4. `[DONE]` 3B/7B WikiText-2 / PIQA / HellaSwag / ARC-Easy 256-sample quick sanity。
+5. `[PARTIAL/FROZEN]` compact subnet 已完成等价性和 latency 分析：MLP-only 有
+   speed signal，但 full-model fixed-decode 没有实质加速，因此仍不能报告
+   Adaptive-B20 wall-clock speedup。
 
 ## 10. Post-v1 addendum: P2 substrate status
 

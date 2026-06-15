@@ -3,8 +3,18 @@
 This document is for external logic/data review. It summarizes the transition
 from the Qwen2.5-3B P2c result to the current Qwen2.5-7B P4 state.
 
+This transition review is frozen at the P4 protocol-debugging stage. The
+canonical cross-phase experiment ledger, including later static benchmark and
+P5 deployment results, is `docs/paper_experiment_record.md`.
+
 The focus is the 7B transition. The 3B result is included only as the anchor
 that motivated the 7B test.
+
+Postscript: the later post-fix 3B protocol v1.2 alignment reached
+`adaptive_B20=986/1000` versus `dense=993/1000`, with failure success
+`200/200` and cost_per_success `1.9270`. This supersedes the historical 3B
+997/1000 table for cross-model reporting. Full interpretation is in
+`docs/paper_experiment_record.md`.
 
 ## 1. Current Status
 

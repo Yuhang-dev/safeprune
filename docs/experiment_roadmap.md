@@ -8,6 +8,7 @@ Trajectory-Event-Aware FFN Compute Allocation for Tool-Using Reasoning Agents
 
 高层研究路线总览见 `docs/research_route_summary.md`。本文保留更细的实验历史和命令上下文。
 论文证据矩阵、ablation 和写作目录见 `docs/paper_evidence_and_outline.md`。
+用于论文写作的完整实验方法与结果总账见 `docs/paper_experiment_record.md`。
 
 核心问题：
 
@@ -33,7 +34,7 @@ cost per successful task = total active FFN cost / successful tasks
 | Hidden-state centroid router | `[DONE]` | 1000 条 P1 已完成；hidden-state-only 弱于显式 event，event hybrid 追平但 router-inclusive cost 高。 |
 | FLAP-style substrate v2 | `[DONE]` | 10% Real Tool 1000 已完成；稳定但非无损，cost_per_success 约降 5.8%。 |
 | Budget ladder | `[DONE]` | 10% Real Tool 1000 已完成；5% 是 allocation anomaly，20% pressure smoke 失败。 |
-| P2c adaptive budget routing | `[DONE]` | 1000 最小矩阵已完成；adaptive_B20 追平 dense 997/1000，cost_per_success 降到 1.9057。 |
+| P2c adaptive budget routing | `[DONE]` | 历史表为 997/1000；post-fix protocol v1.2 对齐为 adaptive_B20 986/1000 vs dense 993/1000，cost_per_success 1.9270。 |
 | Identity no-op fix | `[DONE]` | `_empty_plan_like()` 已修复 stale bias compensation；P2c final table 需用修复后 sanity rerun 确认。 |
 | Real Tool protocol v1.1 | `[DONE]` | 7B trace 显示 `unit_convert` 被写进 `type`；已加强 prompt/error feedback，parser 仍保持 strict。 |
 | Real Tool protocol v1.2 | `[DONE]` | 修复 7B lookup observation 后 final 丢 `owner_` 前缀的问题；strict parser/evaluator 不变。 |
@@ -41,7 +42,7 @@ cost per successful task = total active FFN cost / successful tasks
 | SliceGPT 复现 | `[BASELINE]` | 外部仓库复现，不 vendoring 到本项目；不再阻塞 Agent Prune v1。 |
 | 7B static benchmark quick sanity | `[DONE]` | dense / nested 10% / nested 20% 的 256-sample WikiText-2、PIQA、HellaSwag、ARC-Easy 已完成；20% 静态通用能力退化明显，只能作为动态 final-answer budget。 |
 | 7B full static benchmark | `[OPTIONAL]` | 若需要论文最终通用能力表，再把 256 samples 扩到 1024 或 full validation。 |
-| 3B protocol v1.2 alignment | `[CONDITIONAL]` | 若最终论文主表同时展示 3B 与 7B，则补 3B protocol v1.2 1000；否则必须清楚标注不同 protocol version。 |
+| 3B protocol v1.2 alignment | `[DONE]` | Dense=identity 993/1000；adaptive_B20 986/1000、failure 200/200、cost_per_success 1.9270；待分析 14 条 lookup failure trace。 |
 | compact FFN / kernel | `[PARTIAL/FROZEN]` | compact 等价性和 MLP-only speed signal 已通过，但 full-model fixed-decode 无实质加速；作为 deployment analysis，不阻塞论文主线。 |
 
 ## 1. 为什么转向 Agent 动态 FFN
@@ -217,7 +218,7 @@ failure reflect recovery 保持 dense。
 answer step 可以承受更高剪枝率，且 smoke 中 unit_convert 恢复到 33/33。
 ```
 
-P2c 1000 最小对照矩阵已完成：
+P2c 历史 protocol 1000 最小对照矩阵：
 
 ```text
 dense
@@ -233,7 +234,8 @@ adaptive_B20
 | nested_uniform_10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1.0000 |
 | adaptive_B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1.0000 |
 
-`nested_uniform_10` 证明统一 10% nested substrate 已经稳定；`adaptive_B20`
+该表保留为 pre-fix / pre-v1.2 历史结果。`nested_uniform_10` 在该版本中证明统一
+10% nested substrate 稳定；`adaptive_B20`
 证明 generation-type routing 在保持相同成功率时进一步降低 cost_per_success。
 相对 dense，`adaptive_B20` 的 cost_per_success 下降约 13.6%；相对
 `nested_uniform_10` 下降约 5.0%。
@@ -248,6 +250,18 @@ Dense + stale compensation run instead of a true no-op hook.
 
 The code is fixed. Final paper tables should use a post-fix sanity rerun for
 any `identity_hook` or dense-fallback comparison.
+
+Post-fix protocol v1.2 1000 已完成：
+
+```text
+dense = identity_hook = 993/1000
+nested_uniform_10 = 957/1000
+adaptive_B20 = 986/1000
+adaptive_B20 failure subset = 200/200
+adaptive_B20 cost_per_success = 1.9270
+```
+
+最终跨模型表必须使用该结果，而不是上面的 historical 997/1000 表。
 
 7B dense after the identity fix still failed because the model generated:
 
@@ -424,7 +438,8 @@ plan nesting、overlap、重复/越界 channel index 和 bias compensation norm�
 `dense`、`nested_0p10`、`nested_0p20`。
 19. `[DONE]` 生成 7B subnet theory table：
 remaining FFN channels、parameters、FFN MACs、theoretical FLOPs。
-20. `[CONDITIONAL]` 若论文主表跨 3B/7B，补 3B protocol v1.2 1000 对齐。
+20. `[DONE]` 完成 3B protocol v1.2 1000 对齐；Adaptive-B20 986/1000，
+    failure 200/200，cost_per_success 较 dense 降约 13.85%。
 21. `[PARTIAL]` P5 compact FFN subnet materialization、equivalence check、latency benchmark：
 hardware-aligned compact FFN 在 MLP-only microbench 有速度信号，但 full-model
 fixed-decode latency 未形成实质收益；dynamic Agent latency 暂缓。

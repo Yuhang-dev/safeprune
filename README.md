@@ -32,11 +32,17 @@ The default project route is:
 5. Treat Qwen2.5-7B P4 as the strongest current result: `adaptive_B20` reaches
    1000/1000 under Real Tool protocol v1.2 while reducing theoretical active
    FFN cost per success by about 15.1%.
-6. Treat P5 as deployment analysis: compact equivalence and MLP-only speed
+6. Treat the post-fix 3B protocol v1.2 result as a quality-cost trade-off:
+   `adaptive_B20` reaches 986/1000 versus dense 993/1000, recovers 200/200
+   failure tasks, and reduces cost per success by about 13.85%.
+7. Treat P5 as deployment analysis: compact equivalence and MLP-only speed
    signals pass, but meaningful full-model wall-clock speedup is not yet shown.
-7. Use `docs/paper_evidence_and_outline.md` as the paper evidence matrix,
-   ablation plan, claim boundary, and writing outline.
-8. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
+8. Use `docs/paper_experiment_record.md` as the canonical experiment ledger for
+   paper writing: it records every major method, motivation, result, conclusion,
+   protocol correction, negative result, and claim boundary.
+9. Use `docs/paper_evidence_and_outline.md` as the compact evidence matrix,
+   ablation plan, claim boundary, and paper outline.
+10. Keep SliceGPT/Probe Pruning as external baselines, not blockers for the
    current Agent Prune v1 loop.
 
 The previous SafePrune-DPO alignment-preserving pruning path is now legacy. The
@@ -364,7 +370,7 @@ P2c 100-smoke result:
 | adaptive_B15 | 100/100 | 20/20 | 80/80 | 1.9500 | 1.0000 |
 | adaptive_B20 | 100/100 | 20/20 | 80/80 | 1.9000 | 1.0000 |
 
-P2c 1000 result:
+P2c historical pre-fix 1000 result:
 
 | Method | Success | Failure | Non-failure | Cost / success | Schema validity |
 |---|---:|---:|---:|---:|---:|
@@ -373,10 +379,16 @@ P2c 1000 result:
 | nested_uniform_10 | 997/1000 | 197/200 | 800/800 | 2.0060 | 1.0000 |
 | adaptive_B20 | 997/1000 | 197/200 | 800/800 | 1.9057 | 1.0000 |
 
-`adaptive_B20` matches dense task success while lowering cost per success by
-about 13.6%. It also improves over `nested_uniform_10` by about 5.0%, showing
-that final-answer generations can safely use the 20% plan while tool-call and
-retry generations stay at 10%.
+This historical result motivated the 7B experiment. The post-fix protocol v1.2
+3B result is the paper-facing result:
+
+```text
+dense / identity_hook: 993/1000
+nested_uniform_10:     957/1000
+adaptive_B20:          986/1000
+adaptive_B20 failure:  200/200
+adaptive_B20 cost/success: 1.9270, about 13.85% below dense
+```
 
 P2c 1000 reproduction command:
 
@@ -406,6 +418,9 @@ python -m unittest discover -s tests
 
 ## Docs
 
+- `docs/paper_experiment_record.md`: canonical paper experiment ledger, methods,
+  results, negative findings, protocol versions, and claim boundaries.
+- `docs/paper_evidence_and_outline.md`: compact evidence matrix and paper outline.
 - `docs/experiment_roadmap.md`: current Agent FFN pruning roadmap.
 - `docs/rtx4090_feasibility_plan.md`: two-RTX-4090 execution plan.
 - `docs/slicegpt_repro_commands.md`: external SliceGPT reproduction commands.

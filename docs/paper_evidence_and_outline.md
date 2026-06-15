@@ -3,6 +3,9 @@
 本文用于收束论文主线、区分已冻结证据与待补实验，并防止将 theoretical
 active-FFN cost reduction 误写成 wall-clock speedup。
 
+完整的实验方法、动机、数据、负结果、协议修复和论文角色统一记录在
+`docs/paper_experiment_record.md`。本文只保留高层证据矩阵和写作目录。
+
 ## 1. Paper Thesis
 
 核心命题：
@@ -53,7 +56,7 @@ reflect_recovery   -> dense
 | Real Tool v1 | reflect-localized dense fallback 接近 fixed-window recovery，但 fallback steps 更少 | 证明 failure recovery 是局部计算瓶颈。 |
 | Hidden-state centroid baseline | hidden-only 较弱；event hybrid 可追平但 router-inclusive cost 高 | 证明显式 trajectory event 更直接、更低成本。 |
 | 3B P2 substrate | 10% substrate 990/1000，cost/success 降约 5.8% | 证明机制可以从 1% 扩展到有意义预算。 |
-| 3B P2c | Adaptive-B20 997/1000，与 Dense 相同；cost/success 降约 13.6% | 3B generation-type routing 主结果，但 protocol v1.2 对齐仍待补。 |
+| 3B P2c v1.2 | Adaptive-B20 986/1000 vs Dense 993/1000；failure 200/200；cost/success 降约 13.85% | generation-type routing 有效但非无损；3B 是 quality-cost trade-off。 |
 | 7B P4 | Adaptive-B20 1000/1000；cost/success 降约 15.1% | 当前论文最强主结果。 |
 | 7B static quick sanity | static 20% 的 PPL 和多选能力明显退化 | 说明 20% 只能动态用于 final-answer，不是通用静态压缩。 |
 | P5 deployment analysis | compact 等价性通过；MLP-only 有速度信号；full-model decode 无显著收益 | 限制与系统分析，不作为主结果。 |
@@ -118,23 +121,25 @@ dynamic Agent wall-clock speedup: not evaluated
 > gains do not yet translate into meaningful full-model decode acceleration
 > under the current HuggingFace/PyTorch runtime.
 
-## 6. Required Remaining Experiment
+## 6. 3B Protocol v1.2 Alignment
 
-如果最终主表同时包含 3B 和 7B，则必须补：
+Post-fix 3B protocol v1.2 1000 已完成：
+
+| Method | Success | Failure | Non-failure | Cost / success | Schema validity |
+|---|---:|---:|---:|---:|---:|
+| Dense | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| Identity hook | 993/1000 | 193/200 | 800/800 | 2.2367 | 0.9937 |
+| Nested uniform 10 | 957/1000 | 175/200 | 782/800 | 2.2371 | 0.9557 |
+| Adaptive-B20 | 986/1000 | 200/200 | 786/800 | 1.9270 | 1.0000 |
+
+跨模型口径：
 
 ```text
-Qwen2.5-3B
-Real Tool protocol v1.2
-1000 tasks
-
-dense
-identity_hook
-nested_uniform_10
-adaptive_B20
+3B: Adaptive-B20 is a quality-cost trade-off, not Dense-equivalent.
+7B: Adaptive-B20 is Dense-equivalent on the frozen v1.2 1000-task benchmark.
 ```
 
-原因：现有 3B P2c 与 7B 使用的 protocol version 不完全一致。未完成前，跨模型主表
-必须显式标注 protocol 差异。
+下一步只需检查 3B Adaptive-B20 的 14 条 lookup failure traces，不需要重复整轮。
 
 ## 7. Optional Strengthening Experiments
 
@@ -155,7 +160,7 @@ Nested 20%
 优先级：
 
 ```text
-3B protocol v1.2 alignment > paper tables/ablation > static 1024/full > optional 15%
+3B lookup failure analysis > paper tables/ablation > static 1024/full > optional 15%
 ```
 
 ## 8. Paper Outline
@@ -237,7 +242,7 @@ Nested 20%
 
 ```text
 freeze P4/P5 evidence
--> run 3B protocol v1.2 alignment if using a cross-model main table
+-> inspect 3B Adaptive-B20 lookup failures
 -> assemble main/ablation tables
 -> write paper outline and method
 -> optionally expand static benchmarks
