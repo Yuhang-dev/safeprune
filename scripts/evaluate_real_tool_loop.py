@@ -51,6 +51,7 @@ REAL_TOOL_METHODS = [
     "adaptive_B15",
     "adaptive_B20",
     "uniform20_reflect_dense",
+    "uniform20_all_sparse",
 ]
 SUBSTRATE_ONLY_METHODS = {
     "dense",
@@ -60,6 +61,7 @@ SUBSTRATE_ONLY_METHODS = {
     "adaptive_B15",
     "adaptive_B20",
     "uniform20_reflect_dense",
+    "uniform20_all_sparse",
 }
 DEFAULT_REAL_TOOL_METHODS = [
     "dense",
@@ -399,6 +401,11 @@ class _MethodRuntime:
             plan = self.spec["fallback_plan"]
             selected_stage = "dense_fallback"
             selected_plan_name = "reflect_dense"
+        elif generation_type == "reflect_recovery" and policy.reflect_mode in self.spec["budget_plans"]:
+            plan_key = policy.reflect_mode
+            plan = self.spec["budget_plans"][plan_key]
+            selected_stage = "reflect_recovery"
+            selected_plan_name = self.spec["budget_plan_names"][plan_key]
         elif generation_type == "final_answer":
             plan_key = policy.answer_plan_key
             plan = self.spec["budget_plans"][plan_key]
@@ -700,6 +707,10 @@ def _register_generation_type_specs(
         specs["uniform20_reflect_dense"] = {
             **common,
             "generation_policy": GenerationRoutingPolicy("0p20", "0p20", "dense"),
+        }
+        specs["uniform20_all_sparse"] = {
+            **common,
+            "generation_policy": GenerationRoutingPolicy("0p20", "0p20", "0p20"),
         }
 
 
